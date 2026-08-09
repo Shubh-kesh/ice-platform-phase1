@@ -1,0 +1,64 @@
+name: ice-platform
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ice_user
+      POSTGRES_PASSWORD: ice_pass
+      POSTGRES_DB: ice_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - ice_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ice_user -d ice_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      target: runtime
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: local
+      SECRET_KEY: local-dev-secret-change-in-production
+      POSTGRES_SERVER: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ice_user
+      POSTGRES_PASSWORD: ice_pass
+      POSTGRES_DB: ice_db
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      BACKEND_CORS_ORIGINS: '["http://localhost:5173"]'
+      PORT: 8080
+    ports:
+      - "8000:8080"
+    volumes:
+      # Bind-mount source for hot reload in dev; remove for a production-like run.
+      - ./backend/app:/app/app
+    command: >
+      sh -c "python -m alembic upgrade head &&
+             exec uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload"
+
+volumes:
+  ice_postgres_data:
