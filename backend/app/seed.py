@@ -20,7 +20,7 @@ from app.core.security import hash_password
 from app.models.project import HealthStatus, Project, ProjectAssignment, ProjectStatus
 from app.models.user import User, UserRole
 
-DEMO_PASSWORD = "Demo@1234"
+DEMO_PASSWORD = "DemoPass123"  # Meets requirements: 8+ chars, 1 uppercase, 1 digit
 
 DEMO_USERS = [
     {

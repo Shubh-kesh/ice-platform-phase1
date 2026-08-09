@@ -13,11 +13,13 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
 
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import engine
+from app.core.rate_limit import limiter
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,6 +54,13 @@ app = FastAPI(
     redoc_url=None,
     lifespan=lifespan,
 )
+
+# Attach rate limiter to app
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, lambda request, exc: JSONResponse(
+    status_code=429,
+    content={"detail": "Too many requests. Please try again later."}
+))
 
 # CORS — only the origins listed in BACKEND_CORS_ORIGINS may call this API
 # from a browser. Credentials are allowed since auth uses httpOnly cookies

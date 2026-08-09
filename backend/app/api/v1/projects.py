@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_role
 from app.core.database import get_db
+from app.middleware.audit import record_audit
 from app.models.project import Project, ProjectAssignment
 from app.models.user import User, UserRole
 from app.schemas.project import ProjectCreate, ProjectRead, ProjectUpdate
@@ -50,10 +51,22 @@ async def get_project(
 async def create_project(
     payload: ProjectCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    _: Annotated[User, Depends(require_role(UserRole.ADMIN))],
+    admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
 ):
     project = Project(**payload.model_dump())
     db.add(project)
+    await db.flush()  # Get project.id before recording audit
+
+    # Record audit trail
+    await record_audit(
+        db,
+        user_id=admin.id,
+        action="create",
+        table_name="projects",
+        record_id=str(project.id),
+        changes={"name": {"old": None, "new": project.name}},
+    )
+
     await db.commit()
     await db.refresh(project)
     return project
@@ -72,8 +85,26 @@ async def update_project(
     if user.role == UserRole.SITE_SUPERVISOR:
         await _assert_can_view(db, user, project)
 
+    # Track changes for audit log
+    changes = {}
     for field, value in payload.model_dump(exclude_unset=True).items():
+        old_value = getattr(project, field, None)
+        if old_value != value:
+            changes[field] = {"old": old_value, "new": value}
         setattr(project, field, value)
+
+    await db.flush()
+
+    # Record audit trail if changes were made
+    if changes:
+        await record_audit(
+            db,
+            user_id=user.id,
+            action="update",
+            table_name="projects",
+            record_id=str(project.id),
+            changes=changes,
+        )
 
     await db.commit()
     await db.refresh(project)

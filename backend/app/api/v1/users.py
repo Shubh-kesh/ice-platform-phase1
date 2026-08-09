@@ -5,9 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_role
+from app.api.deps import require_role, get_current_user
 from app.core.database import get_db
 from app.core.security import hash_password
+from app.middleware.audit import record_audit
 from app.models.user import User, UserRole
 from app.schemas.user import UserCreate, UserRead, UserUpdate
 
@@ -30,7 +31,7 @@ async def list_users(
 async def create_user(
     payload: UserCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    _: Annotated[User, Depends(admin_only)],
+    admin: Annotated[User, Depends(admin_only)],
 ):
     existing = await db.execute(select(User).where(User.email == payload.email))
     if existing.scalar_one_or_none() is not None:
@@ -44,6 +45,18 @@ async def create_user(
         hashed_password=hash_password(payload.password),
     )
     db.add(user)
+    await db.flush()  # Get user.id before recording audit
+
+    # Record audit trail
+    await record_audit(
+        db,
+        user_id=admin.id,
+        action="create",
+        table_name="users",
+        record_id=str(user.id),
+        changes={"email": {"old": None, "new": user.email}},
+    )
+
     await db.commit()
     await db.refresh(user)
     return user
@@ -54,15 +67,33 @@ async def update_user(
     user_id: uuid.UUID,
     payload: UserUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    _: Annotated[User, Depends(admin_only)],
+    admin: Annotated[User, Depends(admin_only)],
 ):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # Track changes for audit log
+    changes = {}
     for field, value in payload.model_dump(exclude_unset=True).items():
+        old_value = getattr(user, field, None)
+        if old_value != value:
+            changes[field] = {"old": old_value, "new": value}
         setattr(user, field, value)
+
+    await db.flush()
+
+    # Record audit trail if changes were made
+    if changes:
+        await record_audit(
+            db,
+            user_id=admin.id,
+            action="update",
+            table_name="users",
+            record_id=str(user.id),
+            changes=changes,
+        )
 
     await db.commit()
     await db.refresh(user)

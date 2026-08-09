@@ -1,11 +1,12 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
+from app.core.rate_limit import limiter, AUTH_RATE_LIMIT, REFRESH_RATE_LIMIT
 from app.core.security import create_token, decode_token, verify_password
 from app.models.user import User
 from app.schemas.auth import LoginRequest, RefreshRequest, TokenResponse
@@ -15,7 +16,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(payload: LoginRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+@limiter.limit(AUTH_RATE_LIMIT)
+async def login(request: Request, payload: LoginRequest, db: Annotated[AsyncSession, Depends(get_db)]):
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
 
@@ -40,7 +42,8 @@ async def login(payload: LoginRequest, db: Annotated[AsyncSession, Depends(get_d
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh(payload: RefreshRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+@limiter.limit(REFRESH_RATE_LIMIT)
+async def refresh(request: Request, payload: RefreshRequest, db: Annotated[AsyncSession, Depends(get_db)]):
     decoded = decode_token(payload.refresh_token)
     if decoded is None or decoded.get("type") != "refresh":
         raise HTTPException(
