@@ -53,3 +53,15 @@ class StockMovementRead(BaseModel):
     quantity: float
     note: str | None
     created_at: datetime
+
+
+class InventoryReconciliationRead(BaseModel):
+    """One row of the ledger-reconciliation report (item vs its ledger balance)."""
+
+    item_id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    unit: str
+    quantity_on_hand: float
+    ledger_balance: float
+    matches: bool

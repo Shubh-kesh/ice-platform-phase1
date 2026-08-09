@@ -4,6 +4,12 @@ stock-movement ledger. quantity_on_hand on InventoryItem is a denormalized
 running total updated every time a movement is recorded; the ledger itself
 (stock_movements) is the audit-grade source of truth.
 
+Movement writes take a PostgreSQL row lock (SELECT ... FOR UPDATE) so two
+concurrent movements on the same item can never both decide against the same
+starting balance — one of the Phase 1 critical integrity risks. A
+reconciliation endpoint recomputes on-hand from the ledger to detect any
+legacy drift.
+
 Write access: Admin and Procurement Manager (matches the "procurement
 manages inventory" role split from the Phase 1 design). Read access follows
 the same project-visibility rule as everything else.
@@ -25,21 +31,15 @@ from app.schemas.inventory import (
     InventoryItemCreate,
     InventoryItemRead,
     InventoryItemUpdate,
+    InventoryReconciliationRead,
     StockMovementCreate,
     StockMovementRead,
 )
+from app.services.inventory import MOVEMENT_SIGN, reconcile_project_inventory
 
 router = APIRouter(prefix="/projects/{project_id}/inventory", tags=["inventory"])
 
 write_roles = require_role(UserRole.ADMIN, UserRole.PROCUREMENT_MANAGER)
-
-# Sign convention applied to every movement — see MovementType docstring.
-_MOVEMENT_SIGN = {
-    MovementType.RECEIVED: 1,
-    MovementType.ADJUSTED: 1,
-    MovementType.CONSUMED: -1,
-    MovementType.TRANSFERRED: -1,
-}
 
 
 @router.get("", response_model=list[InventoryItemRead])
@@ -141,9 +141,9 @@ async def record_movement(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[User, Depends(write_roles)],
 ):
-    item = await _get_item_or_404(db, project_id, item_id)
+    item = await _get_item_or_404(db, project_id, item_id, for_update=True)
 
-    signed_quantity = payload.quantity * _MOVEMENT_SIGN[payload.movement_type]
+    signed_quantity = payload.quantity * MOVEMENT_SIGN[payload.movement_type]
     new_balance = float(item.quantity_on_hand) + signed_quantity
     if new_balance < 0:
         raise HTTPException(
@@ -195,11 +195,30 @@ async def list_movements(
     return result.scalars().all()
 
 
-async def _get_item_or_404(db: AsyncSession, project_id: uuid.UUID, item_id: uuid.UUID) -> InventoryItem:
+@router.get("/reconciliation", response_model=list[InventoryReconciliationRead])
+async def reconcile_inventory(
+    project_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[User, Depends(require_role(UserRole.ADMIN, UserRole.PROCUREMENT_MANAGER))],
+):
+    """
+    Ledger-reconciliation report: every item's stored quantity_on_hand compared
+    against the balance recomputed from the immutable stock_movements ledger.
+    matches=false flags an item whose running total has drifted from the ledger
+    (e.g. a legacy lost-update race) and needs an ADJUSTED correction movement.
+    """
     await get_project_or_404(db, project_id)
-    result = await db.execute(
-        select(InventoryItem).where(InventoryItem.id == item_id, InventoryItem.project_id == project_id)
-    )
+    return await reconcile_project_inventory(db, project_id)
+
+
+async def _get_item_or_404(
+    db: AsyncSession, project_id: uuid.UUID, item_id: uuid.UUID, for_update: bool = False
+) -> InventoryItem:
+    await get_project_or_404(db, project_id)
+    stmt = select(InventoryItem).where(InventoryItem.id == item_id, InventoryItem.project_id == project_id)
+    if for_update:
+        stmt = stmt.with_for_update()
+    result = await db.execute(stmt)
     item = result.scalar_one_or_none()
     if item is None:
         raise HTTPException(status_code=404, detail="Inventory item not found")

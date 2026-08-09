@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Enum, String, Date, DateTime, ForeignKey, Numeric, func, Text
+from sqlalchemy import Enum, String, Date, DateTime, ForeignKey, Numeric, UniqueConstraint, func, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -75,6 +75,9 @@ class ProjectAssignment(Base):
     Admin and Procurement Manager see all projects regardless of assignment.
     """
     __tablename__ = "project_assignments"
+    __table_args__ = (
+        UniqueConstraint("project_id", "user_id", name="uq_project_assignments_project_user"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4

@@ -154,7 +154,7 @@ flowchart TB
     ORM --> DB
 ```
 
-**Layering note:** routes depend directly on models/schemas/core. There is **no `services/` or `repositories/` layer** — each handler performs validation, authorization, business logic, persistence, and audit inline. Schemas are the request/response contracts; models are the persistence layer.
+**Layering note:** routes depend directly on models/schemas/core. There is **no full `services/` or `repositories/` layer** — most handlers perform validation, authorization, business logic, persistence, and audit inline. Schemas are the request/response contracts; models are the persistence layer. A thin `app/services/inventory.py` (introduced Phase 3 M1) now holds the ledger-integrity logic; further Phase 3 domain logic (finance, health) is expected to follow the same pattern.
 
 ### Request lifecycle
 
@@ -274,7 +274,7 @@ erDiagram
 - **Money:** `Numeric(14,2)` on budgets/costs; `Numeric(12,2)` on quantities.
 - **Constraints:** unique email (indexed); FK indexes on project-scoped tables; native Postgres enums; **no `CHECK` constraints at the DB level** (e.g., `percent_complete` 0-100 is enforced only by Pydantic).
 - **Transactions:** every mutation commits its data row + audit row in one transaction.
-- **Known gaps:** no row locking on inventory read-modify-write (concurrency race); no uniqueness on `(project_id, user_id)` assignments, `(project_id, name)` inventory, or `(project_id, log_date)`; no audit index on `table_name`/`created_at`.
+- **Known gaps:** no row locking on inventory read-modify-write (concurrency race) — **RESOLVED Phase 3 M1 (row lock + reconciliation)**; no uniqueness on `(project_id, user_id)` assignments — **RESOLVED Phase 3 M2** — still missing on `(project_id, name)` inventory and `(project_id, log_date)`; no audit index on `table_name`/`created_at`.
 
 ---
 
@@ -324,7 +324,7 @@ flowchart TB
 | Inventory | all (scoped) | admin / procurement |
 | Audit | admin | — (write via system only) |
 
-**Current limitation:** `project_assignments` rows can only be created by the seed script — there is no API/UI to assign users, so role-scoped access is demo-data-only in practice.
+**Current limitation (RESOLVED, Phase 3 M2):** `project_assignments` used to be seed-only. An admin-only API (`GET/POST/DELETE /projects/{id}/assignments`, audited, unique-constrained on `(project_id, user_id)`) now assigns/unassigns supervisors and clients, with effects within one request.
 
 ---
 
@@ -351,13 +351,16 @@ flowchart TB
 | GET/POST | `/api/v1/projects/{id}/site-logs` | authenticated | list / create daily log |
 | GET/POST | `/api/v1/projects/{id}/inventory` | read: all; write: admin/proc | list / create items |
 | PATCH | `/api/v1/projects/{id}/inventory/{iid}` | admin/proc | update item metadata |
-| GET/POST | `/api/v1/projects/{id}/inventory/{iid}/movements` | read: all; write: admin/proc | ledger view / record movement |
+| GET/POST | `/api/v1/projects/{id}/inventory/{iid}/movements` | read: all; write: admin/proc | ledger view / record movement (row-locked) |
+| GET | `/api/v1/projects/{id}/inventory/reconciliation` | admin / proc | ledger-vs-on-hand integrity report |
+| GET/POST | `/api/v1/projects/{id}/assignments` | admin | list / assign users to a project |
+| DELETE | `/api/v1/projects/{id}/assignments/{user_id}` | admin | revoke a user's project access |
 | GET | `/api/v1/audit/logs` | admin | list audit trail (filter/paginate) |
 | GET | `/health` | public | liveness (LB/CI) |
 
 **Patterns / conventions:** dependency-injected `AsyncSession` + `User`; explicit HTTPExceptions (400/403/404); audit recorded in-transaction; Pydantic response models; project-scoped writes first verify project existence then visibility.
 
-**Notable deviations:** route shape `/audit/logs` vs flat collections; pagination only on audit (OFFSET/LIMIT, capped at 1000); no idempotency keys on POSTs; no optimistic concurrency (last-write-wins); no assignment-management endpoints.
+**Notable deviations:** route shape `/audit/logs` vs flat collections; pagination only on audit (OFFSET/LIMIT, capped at 1000); no idempotency keys on POSTs; no optimistic concurrency on task/project/user writes (last-write-wins) — inventory movements are the exception, guarded by a PostgreSQL row lock (Phase 3 M1).
 
 ---
 
@@ -447,7 +450,7 @@ sequenceDiagram
     R-->>U: 201 DailySiteLogRead
 ```
 
-### Record stock movement (write path — current concurrency gap)
+### Record stock movement (write path — row-locked)
 
 ```mermaid
 sequenceDiagram
@@ -458,7 +461,7 @@ sequenceDiagram
     participant A as AuditLog
 
     P->>R: movement_type + quantity
-    R->>I: SELECT item (no FOR UPDATE)
+    R->>I: SELECT item ... FOR UPDATE (row lock held to commit)
     R->>R: compute new_balance = on_hand +/- qty
     alt new_balance < 0
         R-->>P: 400 "would take below zero"
@@ -466,12 +469,12 @@ sequenceDiagram
         R->>I: UPDATE quantity_on_hand
         R->>L: INSERT stock_movement
         R->>A: INSERT audit_logs
-        R->>R: COMMIT
+        R->>R: COMMIT (releases lock)
         R-->>P: 201 StockMovementRead
     end
 ```
 
-> **Race:** two concurrent movements can both read the same `quantity_on_hand` before either writes, so the second write can clobber the first (no `SELECT ... FOR UPDATE`). Documented in `docs/CURRENT_STATE.md` §6.
+> **Race (RESOLVED, Phase 3 M1):** previously two concurrent movements could both read the same `quantity_on_hand` before either wrote, so the second write clobbered the first. Movements now take a `SELECT ... FOR UPDATE` row lock, serializing writers; `GET /projects/{id}/inventory/reconciliation` detects any legacy drift. Documented in `docs/CURRENT_STATE.md` §6.
 
 ### Read path (Command Center)
 

@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,9 +11,17 @@ from app.core.database import get_db
 from app.middleware.audit import record_audit
 from app.models.project import Project, ProjectAssignment
 from app.models.user import User, UserRole
-from app.schemas.project import ProjectCreate, ProjectRead, ProjectUpdate
+from app.schemas.project import AssignmentCreate, ProjectCreate, ProjectRead, ProjectUpdate
+from app.schemas.user import UserRead
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+admin_only = require_role(UserRole.ADMIN)
+
+# Only supervisors and clients are granted per-project access — admin and
+# procurement already see every project by role (documented in
+# ProjectAssignment).
+_ASSIGNABLE_ROLES = (UserRole.SITE_SUPERVISOR, UserRole.CLIENT)
 
 
 @router.get("", response_model=list[ProjectRead])
@@ -110,3 +118,110 @@ async def update_project(
     await db.commit()
     await db.refresh(project)
     return project
+
+
+async def _get_user_or_404(db: AsyncSession, user_id: uuid.UUID) -> User:
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+@router.get("/{project_id}/assignments", response_model=list[UserRead])
+async def list_project_assignments(
+    project_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[User, Depends(admin_only)],
+):
+    """Admin-only: the users granted access to this project."""
+    await get_project_or_404(db, project_id)
+    result = await db.execute(
+        select(User)
+        .join(ProjectAssignment, ProjectAssignment.user_id == User.id)
+        .where(ProjectAssignment.project_id == project_id)
+        .order_by(User.full_name)
+    )
+    return result.scalars().all()
+
+
+@router.post(
+    "/{project_id}/assignments",
+    response_model=UserRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def assign_user_to_project(
+    project_id: uuid.UUID,
+    payload: AssignmentCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    admin: Annotated[User, Depends(admin_only)],
+):
+    """Admin-only: grant a supervisor/client access to a project."""
+    await get_project_or_404(db, project_id)
+    user = await _get_user_or_404(db, payload.user_id)
+
+    if user.role not in _ASSIGNABLE_ROLES:
+        raise HTTPException(
+            status_code=400,
+            detail="Only site supervisors and clients can be assigned to projects",
+        )
+
+    existing = await db.execute(
+        select(ProjectAssignment).where(
+            ProjectAssignment.project_id == project_id,
+            ProjectAssignment.user_id == payload.user_id,
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="User is already assigned to this project")
+
+    db.add(ProjectAssignment(project_id=project_id, user_id=payload.user_id))
+    await db.flush()
+
+    await record_audit(
+        db,
+        user_id=admin.id,
+        action="assign",
+        table_name="project_assignments",
+        record_id=str(project_id),
+        changes={"user_id": {"old": None, "new": str(payload.user_id)}},
+    )
+
+    await db.commit()
+    return user
+
+
+@router.delete("/{project_id}/assignments/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def unassign_user_from_project(
+    project_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    admin: Annotated[User, Depends(admin_only)],
+):
+    """Admin-only: revoke a user's access to a project (takes effect immediately)."""
+    await get_project_or_404(db, project_id)
+
+    result = await db.execute(
+        select(ProjectAssignment).where(
+            ProjectAssignment.project_id == project_id,
+            ProjectAssignment.user_id == user_id,
+        )
+    )
+    assignment = result.scalar_one_or_none()
+    if assignment is None:
+        raise HTTPException(status_code=404, detail="User is not assigned to this project")
+
+    await db.delete(assignment)
+    await db.flush()
+
+    await record_audit(
+        db,
+        user_id=admin.id,
+        action="unassign",
+        table_name="project_assignments",
+        record_id=str(project_id),
+        changes={"user_id": {"old": str(user_id), "new": None}},
+    )
+
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

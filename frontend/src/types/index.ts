@@ -45,6 +45,12 @@ export interface TokenResponse {
   token_type: string;
 }
 
+// --- Phase 3 M2: project assignments (admin) ---
+
+export interface AssignmentCreateInput {
+  user_id: string;
+}
+
 export interface ApiErrorShape {
   detail: string;
   errors?: { field: string; message: string }[];

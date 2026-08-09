@@ -29,6 +29,12 @@ class ProjectUpdate(BaseModel):
     budget_spent: float | None = None
 
 
+class AssignmentCreate(BaseModel):
+    """Assign an existing user to a project (admin-only endpoint)."""
+
+    user_id: uuid.UUID
+
+
 class ProjectRead(ProjectBase):
     model_config = ConfigDict(from_attributes=True)
 

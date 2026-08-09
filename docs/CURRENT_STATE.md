@@ -38,11 +38,11 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 |---|---|---|---|
 | Authentication | `api/v1/auth.py`, `core/security.py`, `core/rate_limit.py` | `lib/auth-context.tsx`, `lib/api.ts`, `pages/Login.tsx` | JWT access (30m) + refresh (7d); bcrypt; login rate-limited 5/min |
 | Users (admin CRUD) | `api/v1/users.py` | — | Admin-only; password policy 8 chars + 1 uppercase + 1 digit |
-| Projects + health | `api/v1/projects.py`, `models/project.py` | `CommandCenter.tsx`, `ProjectCard.tsx`, `KpiStrip.tsx`, `HealthDot.tsx`, `ProjectDetail.tsx` | 3 color-coded health fields, manual |
+| Projects + health | `api/v1/projects.py`, `models/project.py` | `CommandCenter.tsx`, `ProjectCard.tsx`, `KpiStrip.tsx`, `HealthDot.tsx`, `ProjectDetail.tsx`, `ProjectAssignments.tsx` | 3 color-coded health fields, manual; admin-assignable team panel (Phase 3 M2) |
 | Audit trail | `models/audit.py`, `middleware/audit.py`, `api/v1/audit.py` | — | Admin read endpoint only |
 | Tasks / Gantt bars | `models/task.py`, `api/v1/tasks.py` | `ProjectTimeline.tsx` | Flat task list per project |
 | Daily site logs | `models/site_log.py`, `api/v1/site_logs.py` | `DailySiteLogs.tsx` | Append-only create/read |
-| Inventory ledger | `models/inventory.py`, `api/v1/inventory.py` | `InventoryPanel.tsx` | Items + signed stock-movement ledger |
+| Inventory ledger | `models/inventory.py`, `api/v1/inventory.py`, `services/inventory.py` | `InventoryPanel.tsx` | Items + row-locked signed stock-movement ledger; reconciliation report (`GET /projects/{id}/inventory/reconciliation`) |
 | Finance schema | `models/finance.py` | — | Tables only, **no endpoints** |
 | Seed/demo data | `seed.py` | — | 4 role users + 15 projects |
 
@@ -54,6 +54,7 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 - Password policy enforced at user creation (min 8 chars, 1 uppercase, 1 digit).
 - Four roles: admin, site_supervisor, procurement_manager, client.
 - RBAC: admin-only for user/project mutations; supervisors/clients scoped to assigned projects via `project_assignments`.
+- Project-assignment management API (Phase 3 M2): admin assigns/unassigns supervisors/clients via `GET/POST/DELETE /projects/{id}/assignments`, audited, unique-constrained, take effect within one request.
 - Projects CRUD with status + timeline/budget/safety health enums + budgets + dates.
 - Command Center UI: project cards, KPI strip, per-project health dots, drill-down detail page.
 - Audit logging on user and project create/update; admin read endpoint `GET /api/v1/audit/logs`.
@@ -83,10 +84,10 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 
 ## 6. Known bugs
 
-- **Concurrent stock movements can lose updates:** `record_movement` reads `quantity_on_hand`, computes a new balance, and writes it without a row lock (`SELECT ... FOR UPDATE`). Two simultaneous movements on the same item can both succeed against the same starting balance, dropping one change. (`api/v1/inventory.py:146`)
+- **Concurrent stock movements can lose updates — RESOLVED (Phase 3, M1):** `record_movement` now locks the item row (`SELECT ... FOR UPDATE`) so simultaneous movements serialize instead of both deciding against the same starting balance. A concurrency test fires two parallel consumptions (both persist, on-hand = 40 after 2×30 from 100) and `GET /projects/{id}/inventory/reconciliation` recomputes each item's balance from the ledger to surface any legacy drift. (`api/v1/inventory.py`, `services/inventory.py`)
 - **Task `PATCH` skips date-order validation:** create validates `end_date >= start_date`; update does not — a malformed task (end before start) can be saved via `PATCH`. (`schemas/task.py`)
 - **Task dependency cycles allowed:** `depends_on_id` can be set to form a self-reference or cycle; not checked on create or update.
-- **Duplicate-ish data allowed:** duplicate `project_assignments` rows, duplicate inventory item names per project, and multiple daily site logs per day have no uniqueness constraints.
+- **Duplicate-ish data allowed — partially RESOLVED:** duplicate `project_assignments` rows are now impossible (unique constraint + API returns 409, Phase 3 M2); duplicate inventory item names per project, and multiple daily site logs per day, still have no uniqueness constraints.
 - **`uuid.UUID(user_id)` can raise `ValueError` -> 500** in `deps.py:45` and `auth.py:55` when a token carries a non-UUID subject (low exploitability, tokens are signed).
 - **Backend lint/type failures:** `ruff check app` reports 5 unused-import (F401) errors; `mypy app` reports 10 errors (broken `Mapped["Project"]` forward references in 4 model files, config args).
 - **`ip_address` on audit entries is always NULL** — the parameter exists but is never passed.
@@ -108,7 +109,7 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 2. **Refresh tokens are un-rotated and have no server-side revocation:** `/auth/refresh` issues a fresh pair indefinitely; logout is purely client-side; deactivated users are only cut off on the next token validation.
 3. **Rate limiting is in-memory and per-process:** with 4 gunicorn workers the effective login limit is ~4x; and `get_remote_address` uses `request.client.host`, so behind a reverse proxy every user shares one IP value, letting a global limit be exhausted or bypassed.
 4. **Client role can read project budgets** via the standard project response when assigned.
-5. **No audit** of login/refresh events or project assignments (no assignment API exists).
+5. **No audit** of login/refresh events remains; project assignments are now audited (`assign`/`unassign`, Phase 3 M2).
 6. **Audit immutability by convention only:** nothing at the DB level prevents UPDATE/DELETE of `audit_logs` rows.
 7. **Password policy is minimal:** 8 chars + 1 uppercase + 1 digit; no maximum length (bcrypt truncates at 72 bytes).
 8. **Compose/demo config:** `docker-compose.yml` hardcodes `SECRET_KEY: local-dev-secret-change-in-production`; `seed.py` ships known demo credentials. `.env` files are correctly gitignored.
@@ -127,10 +128,10 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 
 ## 10. Testing status
 
-- **Backend tests: 33, all passing** against real Postgres (verified on Aug 9, 2026). Files: test_auth (9), test_users (8), test_tasks (7), test_site_logs (4), test_inventory (5).
+- **Backend tests: 45, all passing** against real Postgres (verified on Aug 9, 2026). Files: test_auth (9), test_users (8), test_tasks (7), test_site_logs (4), test_inventory (9 — incl. row-lock concurrency, ledger-reconciliation match/mismatch, reconciliation RBAC), test_projects (8 — assignment API admin/RBAC/duplicate/isolation).
 - **Coverage: 73%** overall (pytest-cov). Lowest areas: inventory `api/v1/inventory.py` 39%, `projects.py` 42%, `tasks.py` 42%.
 - **Frontend tests: none** (no vitest/RTL config or tests).
-- **Missing critical tests:** `test_projects.py` (never added — project CRUD, PATCH RBAC, health updates, budget validation untested); audit endpoint (`/audit/logs`) untested; inventory client read-isolation, concurrency, and ledger-reconciliation untested; no migration-drift test; no finance tests.
+- **Missing critical tests:** `test_projects.py` now exists (assignment API, Phase 3 M2) but project CRUD, PATCH RBAC, health updates, and budget validation remain untested; audit endpoint (`/audit/logs`) untested; inventory client read-isolation untested (row-lock concurrency and ledger-reconciliation now covered in Phase 3 M1); no migration-drift test; no finance tests.
 - **Tooling:** pytest + pytest-asyncio + httpx; tests use a disposable `ice_test_db` Postgres database created/dropped per test. Ruff and mypy available in dev deps but **not CI-gated**.
 
 ## 11. Production readiness
@@ -148,7 +149,7 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 
 ## 13. Known limitations
 
-- **No project-assignment management API:** users can only be assigned to projects through the seed script; real user onboarding to sites is impossible through the system today, which makes per-project RBAC effectively demo-only.
+- **No project-assignment management API — RESOLVED (Phase 3 M2):** admins now assign/unassign supervisors and clients per project via `GET/POST/DELETE /projects/{id}/assignments` (admin-only, audited, unique-constrained). Users can be onboarded to sites through the system, making per-project RBAC operational rather than demo-only.
 - **Finance** is schema-only: no cost-code dimension, no job-cost/invoice CRUD, no milestone invoicing, no accounting sync (blocked on a provider/OAuth decision, per repo notes).
 - **No file uploads or voice capture** in daily site logs.
 - **No offline-first / mobile-first experience:** it is a desktop web SPA; sidebar does not collapse; no PWA/service worker.
@@ -166,6 +167,8 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 - **Async SQLAlchemy + asyncpg end-to-end**, async FastAPI handlers, no blocking calls in hot paths.
 - **Money as `Numeric(14,2)`**; dates as `Date`/`DateTime(timezone=True)`; Postgres-native types (UUID, JSONB, ENUM) throughout.
 - **Ledger-over-denormalized-count for inventory:** `quantity_on_hand` is a denormalized running total, with `stock_movements` kept as the immutable audit-grade source of truth. Sign convention is derived from `movement_type`; downward corrections are recorded as consumed/adjusted with notes rather than signed adjustments.
+- **Row-locked inventory writes (Phase 3, M1):** movement recording takes a PostgreSQL `SELECT ... FOR UPDATE` row lock so concurrent movements cannot both apply against the same starting balance. The ledger remains the source of truth; a reconciliation endpoint recomputes balances from it to detect drift.
+- **Thin services layer (introduced Phase 3, M1):** `app/services/inventory.py` holds the ledger sign/sum and reconciliation logic — the first domain logic extracted from route handlers. Routes keep request/auth/audit concerns; further Phase 3 milestones (finance, health) follow the same pattern.
 - **Append-only records by convention:** `audit_logs` and `daily_site_logs` have no update/delete endpoints; `record_audit()` is explicit and transactional (committed atomically with the mutation) rather than ORM event hooks.
 - **Application-level RBAC with shared project-visibility rules:** admin/procurement see all projects; supervisors/clients see only assigned ones, enforced per-endpoint via `project_access.assert_can_view_project`.
 - **Access token in browser memory only; refresh token in localStorage** — chosen to reduce XSS lift of the access token (with the known trade-off documented in Security concerns).
