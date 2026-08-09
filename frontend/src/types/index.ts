@@ -49,3 +49,100 @@ export interface ApiErrorShape {
   detail: string;
   errors?: { field: string; message: string }[];
 }
+
+// --- Phase 2: Gantt/timeline tasks ---
+
+export type TaskStatus = "not_started" | "in_progress" | "completed" | "blocked";
+
+export interface ProjectTask {
+  id: string;
+  project_id: string;
+  name: string;
+  start_date: string;
+  end_date: string;
+  status: TaskStatus;
+  percent_complete: number;
+  depends_on_id: string | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskCreateInput {
+  name: string;
+  start_date: string;
+  end_date: string;
+  depends_on_id?: string | null;
+  sort_order?: number;
+}
+
+export interface TaskUpdateInput {
+  name?: string;
+  start_date?: string;
+  end_date?: string;
+  status?: TaskStatus;
+  percent_complete?: number;
+}
+
+// --- Phase 2: Daily site logs ---
+
+export interface DailySiteLog {
+  id: string;
+  project_id: string;
+  created_by: string | null;
+  log_date: string;
+  work_summary: string;
+  issues: string | null;
+  workers_present: number | null;
+  weather: string | null;
+  photo_urls: string[];
+  created_at: string;
+}
+
+export interface DailySiteLogCreateInput {
+  log_date: string;
+  work_summary: string;
+  issues?: string | null;
+  workers_present?: number | null;
+  weather?: string | null;
+}
+
+// --- Phase 2: Inventory ---
+
+export type MovementType = "received" | "consumed" | "transferred" | "adjusted";
+
+export interface InventoryItem {
+  id: string;
+  project_id: string;
+  name: string;
+  unit: string;
+  quantity_on_hand: number;
+  reorder_threshold: number | null;
+  unit_cost: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InventoryItemCreateInput {
+  name: string;
+  unit: string;
+  opening_quantity?: number;
+  reorder_threshold?: number | null;
+  unit_cost?: number | null;
+}
+
+export interface StockMovement {
+  id: string;
+  item_id: string;
+  recorded_by: string | null;
+  movement_type: MovementType;
+  quantity: number;
+  note: string | null;
+  created_at: string;
+}
+
+export interface StockMovementCreateInput {
+  movement_type: MovementType;
+  quantity: number;
+  note?: string | null;
+}

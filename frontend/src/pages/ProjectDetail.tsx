@@ -5,6 +5,10 @@ import { api } from "../lib/api";
 import type { Project } from "../types";
 import { AppShell } from "../components/AppShell";
 import { HealthDot } from "../components/HealthDot";
+import { ProjectTimeline } from "../components/ProjectTimeline";
+import { DailySiteLogs } from "../components/DailySiteLogs";
+import { InventoryPanel } from "../components/InventoryPanel";
+import { useAuth } from "../lib/auth-context";
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-IN", {
@@ -24,6 +28,14 @@ function formatDate(value: string) {
 
 export function ProjectDetail() {
   const { projectId } = useParams<{ projectId: string }>();
+  const { user } = useAuth();
+
+  // Mirrors backend RBAC: admin/supervisor manage the timeline & site
+  // logs, admin/procurement manage inventory. The API enforces this
+  // authoritatively — these just keep the UI from offering actions that
+  // would 403 anyway.
+  const canWriteTimeline = user?.role === "admin" || user?.role === "site_supervisor";
+  const canWriteInventory = user?.role === "admin" || user?.role === "procurement_manager";
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", projectId],
@@ -107,11 +119,15 @@ export function ProjectDetail() {
             </div>
           </div>
 
-          <div className="mt-6 rounded-md border border-dashed border-ink-border p-6 text-center">
-            <p className="text-sm text-paper-muted">
-              Gantt chart, daily site logs, and inventory detail arrive in
-              Phase 2.
-            </p>
+          <div className="mt-6 space-y-4">
+            <ProjectTimeline
+              projectId={project.id}
+              projectStart={project.start_date}
+              projectEnd={project.target_end_date}
+              canWrite={canWriteTimeline}
+            />
+            <DailySiteLogs projectId={project.id} canWrite={canWriteTimeline} />
+            <InventoryPanel projectId={project.id} canWrite={canWriteInventory} />
           </div>
         </div>
       )}

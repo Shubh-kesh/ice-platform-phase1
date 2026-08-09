@@ -1,17 +1,16 @@
 """
 Tests for authentication endpoints.
 """
+import httpx
 import pytest
-from fastapi.testclient import TestClient
 
 from app.models.user import User, UserRole
-from app.core.security import hash_password
 
 
 @pytest.mark.asyncio
-async def test_login_success(client: TestClient, test_db, test_admin_user: User):
+async def test_login_success(client: httpx.AsyncClient, test_db, test_admin_user: User):
     """Test successful login."""
-    response = client.post(
+    response = await client.post(
         "/api/v1/auth/login",
         json={"email": "admin@test.com", "password": "TestPass123"},
     )
@@ -23,9 +22,9 @@ async def test_login_success(client: TestClient, test_db, test_admin_user: User)
 
 
 @pytest.mark.asyncio
-async def test_login_invalid_password(client: TestClient, test_admin_user: User):
+async def test_login_invalid_password(client: httpx.AsyncClient, test_admin_user: User):
     """Test login with invalid password."""
-    response = client.post(
+    response = await client.post(
         "/api/v1/auth/login",
         json={"email": "admin@test.com", "password": "WrongPassword123"},
     )
@@ -34,9 +33,9 @@ async def test_login_invalid_password(client: TestClient, test_admin_user: User)
 
 
 @pytest.mark.asyncio
-async def test_login_nonexistent_user(client: TestClient):
+async def test_login_nonexistent_user(client: httpx.AsyncClient):
     """Test login with nonexistent user."""
-    response = client.post(
+    response = await client.post(
         "/api/v1/auth/login",
         json={"email": "nonexistent@test.com", "password": "TestPass123"},
     )
@@ -45,7 +44,7 @@ async def test_login_nonexistent_user(client: TestClient):
 
 
 @pytest.mark.asyncio
-async def test_login_inactive_user(client: TestClient, test_db):
+async def test_login_inactive_user(client: httpx.AsyncClient, test_db):
     """Test login with inactive user."""
     from app.models.user import User
     from app.core.security import hash_password
@@ -60,7 +59,7 @@ async def test_login_inactive_user(client: TestClient, test_db):
     test_db.add(user)
     await test_db.commit()
 
-    response = client.post(
+    response = await client.post(
         "/api/v1/auth/login",
         json={"email": "inactive@test.com", "password": "TestPass123"},
     )
@@ -69,17 +68,15 @@ async def test_login_inactive_user(client: TestClient, test_db):
 
 
 @pytest.mark.asyncio
-async def test_get_current_user(client: TestClient, test_admin_user: User):
+async def test_get_current_user(client: httpx.AsyncClient, test_admin_user: User):
     """Test getting current user info."""
-    # First login to get token
-    login_response = client.post(
+    login_response = await client.post(
         "/api/v1/auth/login",
         json={"email": "admin@test.com", "password": "TestPass123"},
     )
     access_token = login_response.json()["access_token"]
 
-    # Then get current user
-    response = client.get(
+    response = await client.get(
         "/api/v1/auth/me",
         headers={"Authorization": f"Bearer {access_token}"},
     )
@@ -91,24 +88,24 @@ async def test_get_current_user(client: TestClient, test_admin_user: User):
 
 
 @pytest.mark.asyncio
-async def test_get_current_user_without_token(client: TestClient):
+async def test_get_current_user_without_token(client: httpx.AsyncClient):
     """Test getting current user without token."""
-    response = client.get("/api/v1/auth/me")
-    assert response.status_code == 403  # FastAPI returns 403 for missing credentials
+    response = await client.get("/api/v1/auth/me")
+    # OAuth2PasswordBearer (auto_error=True) rejects a missing Authorization
+    # header itself, before get_current_user's own 401 logic even runs.
+    assert response.status_code == 401
 
 
 @pytest.mark.asyncio
-async def test_refresh_token(client: TestClient, test_admin_user: User):
+async def test_refresh_token(client: httpx.AsyncClient, test_admin_user: User):
     """Test token refresh."""
-    # Login to get tokens
-    login_response = client.post(
+    login_response = await client.post(
         "/api/v1/auth/login",
         json={"email": "admin@test.com", "password": "TestPass123"},
     )
     refresh_token = login_response.json()["refresh_token"]
 
-    # Refresh the token
-    response = client.post(
+    response = await client.post(
         "/api/v1/auth/refresh",
         json={"refresh_token": refresh_token},
     )
@@ -119,11 +116,39 @@ async def test_refresh_token(client: TestClient, test_admin_user: User):
 
 
 @pytest.mark.asyncio
-async def test_refresh_invalid_token(client: TestClient):
+async def test_refresh_invalid_token(client: httpx.AsyncClient):
     """Test refresh with invalid token."""
-    response = client.post(
+    response = await client.post(
         "/api/v1/auth/refresh",
         json={"refresh_token": "invalid-token"},
     )
     assert response.status_code == 401
     assert "Invalid refresh token" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_rate_limiting_blocks_after_threshold(client: httpx.AsyncClient, test_admin_user: User):
+    """
+    The `client` fixture disables rate limiting by default (see conftest.py)
+    so the rest of the suite isn't affected by slowapi's process-wide hit
+    counter. Re-enable it just for this test to verify the limit is real.
+    """
+    from app.main import app
+
+    app.state.limiter.enabled = True
+    try:
+        responses = [
+            await client.post(
+                "/api/v1/auth/login",
+                json={"email": "admin@test.com", "password": "WrongPassword"},
+            )
+            for _ in range(6)
+        ]
+    finally:
+        app.state.limiter.enabled = False
+
+    # First 5 attempts are rejected on credentials (401); the 6th is
+    # rejected by the rate limiter itself (429) before credentials are
+    # even checked.
+    assert [r.status_code for r in responses[:5]] == [401] * 5
+    assert responses[5].status_code == 429

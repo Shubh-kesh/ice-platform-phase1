@@ -24,8 +24,8 @@ DEMO_PASSWORD = "DemoPass123"  # Meets requirements: 8+ chars, 1 uppercase, 1 di
 
 DEMO_USERS = [
     {
-        "email": "admin@ice.demo",
-        "full_name": "Aarav Mehta",
+        "email": "Pankaj1234@gmail.com",
+        "full_name": "Pankaj Sen",
         "role": UserRole.ADMIN,
         "phone": "9876500001",
     },
