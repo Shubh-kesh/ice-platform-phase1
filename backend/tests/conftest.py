@@ -209,6 +209,7 @@ async def test_client_user(test_db: AsyncSession) -> User:
 async def test_project(test_db: AsyncSession) -> Project:
     """Create a bare project with no assignments — visible to admin/procurement only."""
     project = Project(
+        project_code="PRJ-TEST-0001",
         name="Test Residence",
         site_address="123 Test Street",
         client_name="Test Client Co.",

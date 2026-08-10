@@ -22,7 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_role
-from app.api.project_access import assert_can_view_project, get_project_or_404
+from app.api.project_access import assert_project_writable, assert_can_view_project, get_project_or_404
 from app.core.database import get_db
 from app.middleware.audit import record_audit
 from app.models.inventory import InventoryItem, MovementType, StockMovement
@@ -64,7 +64,8 @@ async def create_inventory_item(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[User, Depends(write_roles)],
 ):
-    await get_project_or_404(db, project_id)
+    project = await get_project_or_404(db, project_id)
+    assert_project_writable(project)  # ARCHIVED projects are read-only
 
     data = payload.model_dump(exclude={"opening_quantity"})
     item = InventoryItem(project_id=project_id, quantity_on_hand=0, **data)
@@ -106,6 +107,8 @@ async def update_inventory_item(
     user: Annotated[User, Depends(write_roles)],
 ):
     item = await _get_item_or_404(db, project_id, item_id)
+    project = await get_project_or_404(db, project_id)
+    assert_project_writable(project)  # ARCHIVED projects are read-only
 
     changes = {}
     for field, value in payload.model_dump(exclude_unset=True).items():
@@ -142,6 +145,8 @@ async def record_movement(
     user: Annotated[User, Depends(write_roles)],
 ):
     item = await _get_item_or_404(db, project_id, item_id, for_update=True)
+    project = await get_project_or_404(db, project_id)
+    assert_project_writable(project)  # ARCHIVED projects are read-only
 
     signed_quantity = payload.quantity * MOVEMENT_SIGN[payload.movement_type]
     new_balance = float(item.quantity_on_hand) + signed_quantity

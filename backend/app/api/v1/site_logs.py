@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_role
-from app.api.project_access import assert_can_view_project, get_project_or_404
+from app.api.project_access import assert_can_view_project, assert_project_writable, get_project_or_404
 from app.core.database import get_db
 from app.middleware.audit import record_audit
 from app.models.site_log import DailySiteLog
@@ -50,6 +50,7 @@ async def create_site_log(
     project = await get_project_or_404(db, project_id)
     if user.role == UserRole.SITE_SUPERVISOR:
         await assert_can_view_project(db, user, project)
+    assert_project_writable(project)  # ARCHIVED projects are read-only
 
     log = DailySiteLog(project_id=project_id, created_by=user.id, **payload.model_dump())
     db.add(log)

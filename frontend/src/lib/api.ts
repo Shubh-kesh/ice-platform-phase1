@@ -1,5 +1,5 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from "axios";
-import type { TokenResponse } from "../types";
+import type { Project, ProjectCreateInput, TokenResponse } from "../types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000/api/v1";
 
@@ -55,6 +55,39 @@ async function refreshAccessToken(): Promise<string | null> {
     setStoredRefreshToken(null);
     return null;
   }
+}
+
+export async function getProjects(includeArchived = false): Promise<Project[]> {
+  const { data } = await api.get<Project[]>("/projects", {
+    params: includeArchived ? { include: "archived" } : {},
+  });
+  return data;
+}
+
+export async function getProject(projectId: string): Promise<Project> {
+  const { data } = await api.get<Project>(`/projects/${projectId}`);
+  return data;
+}
+
+export async function createProject(
+  input: ProjectCreateInput
+): Promise<Project> {
+  const { data } = await api.post<Project>("/projects", input);
+  return data;
+}
+
+// Lifecycle transitions follow the backend lifecycle: draft -> active ->
+// completed -> archived, and restore pulls an archived project back to its
+// pre-archive state. The API enforces the rules; the UI only offers the
+// transitions that are legal from the current status.
+export async function transitionProject(
+  projectId: string,
+  action: "activate" | "complete" | "archive" | "restore"
+): Promise<Project> {
+  const { data } = await api.post<Project>(
+    `/projects/${projectId}/${action}`
+  );
+  return data;
 }
 
 api.interceptors.response.use(

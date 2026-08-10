@@ -22,7 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_role
-from app.api.project_access import get_project_or_404
+from app.api.project_access import assert_project_writable, get_project_or_404
 from app.core.database import get_db
 from app.middleware.audit import record_audit
 from app.models.finance import CostCode, JobCost
@@ -93,6 +93,7 @@ async def create_job_cost(
     user: Annotated[User, Depends(write_roles)],
 ):
     project = await _get_project_locked(db, project_id)
+    assert_project_writable(project)  # ARCHIVED projects are read-only
 
     cost = JobCost(project_id=project_id, **payload.model_dump())
     db.add(cost)
@@ -125,6 +126,7 @@ async def update_job_cost(
 ):
     cost = await _get_job_cost_or_404(db, project_id, cost_id)
     project = await _get_project_locked(db, project_id)
+    assert_project_writable(project)  # ARCHIVED projects are read-only
 
     changes = {}
     for field, value in payload.model_dump(exclude_unset=True).items():
@@ -172,6 +174,7 @@ async def delete_job_cost(
 ):
     cost = await _get_job_cost_or_404(db, project_id, cost_id)
     project = await _get_project_locked(db, project_id)
+    assert_project_writable(project)  # ARCHIVED projects are read-only
 
     await record_audit(
         db,

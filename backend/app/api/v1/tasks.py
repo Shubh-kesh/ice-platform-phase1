@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_role
-from app.api.project_access import assert_can_view_project, get_project_or_404
+from app.api.project_access import assert_can_view_project, assert_project_writable, get_project_or_404
 from app.core.database import get_db
 from app.middleware.audit import record_audit
 from app.models.task import Task
@@ -26,10 +26,15 @@ write_roles = require_role(UserRole.ADMIN, UserRole.SITE_SUPERVISOR)
 
 
 async def _assert_can_write(db: AsyncSession, user: User, project_id: uuid.UUID) -> None:
-    """Admin can write to any project; a supervisor only to ones they're assigned to."""
+    """Admin can write to any project; a supervisor only to ones they're assigned to.
+
+    ARCHIVED projects are read-only: supervisors are kept out by the view
+    check (404, no existence leak) and admin/procurement get 403 here.
+    """
     project = await get_project_or_404(db, project_id)
     if user.role == UserRole.SITE_SUPERVISOR:
         await assert_can_view_project(db, user, project)
+    assert_project_writable(project)
 
 
 @router.get("", response_model=list[TaskRead])

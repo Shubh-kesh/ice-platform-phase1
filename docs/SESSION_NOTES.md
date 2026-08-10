@@ -1,111 +1,171 @@
-# Session Notes — Phase 3 kickoff (M1 + M2)
+# Session Notes — Phase 3 (M1 + M2 + M4 + M10 shipped; M11 planned)
 
-**Session dates:** Aug 9–10, 2026. Branch `claude-development`.
+**Session dates:** Aug 9–11, 2026. Branch `claude-development`.
 
 See `CLAUDE.md`, `docs/ROADMAP.md` for durable context. This file records only
 session-local details needed to resume.
 
 ## 1. What we accomplished
 
-- Committed `d0a9e5c` (docs foundation + roadmap). Nothing after that is committed.
-- Planned Phase 3 (7 milestones + analysis) and got approval.
+- Committed `d0a9e5c`/`0779e5d` (docs foundation + roadmap), then
+  `1e046ec` (**feat: implement job costing and budget tracking** — M1+M2+M4).
+- Planned Phase 3 and revised the roadmap (Aug 10) to add **M10 — Project
+  Lifecycle & Admin** and **M11 — Google Sign-In** before the rest of Phase 3.
 - **M1 — inventory integrity:** row-locked `record_movement()` (`SELECT ... FOR UPDATE`),
   ledger-reconciliation service + `GET /projects/{id}/inventory/reconciliation`.
 - **M2 — project-assignment management:** unique constraint on
   `(project_id, user_id)` + admin-only assign/unassign API + admin UI panel.
-- Tests grew 33 → 45 (all passing); frontend `tsc + vite build` clean.
-- **M4 — job costing (this session):** `CostCode` enum on `job_costs` (replaces the
-  unused free-text `category` column), job-cost CRUD (`GET/POST/PATCH/DELETE
+- **M4 — job costing:** `CostCode` enum on `job_costs` (replaces the unused
+  free-text `category` column), job-cost CRUD (`GET/POST/PATCH/DELETE
   /projects/{id}/job-costs`), derived `Project.budget_spent` (= `SUM(job_costs)`,
   recomputed in-transaction on every mutation), admin/proc-only
-  `GET /projects/{id}/budget` roll-up, budget roll-up schema + finance service
-  (`app/services/finance.py`), migration `c6d8e0f2a415`, 9 new tests,
-  `JobCostsPanel` frontend. Suite grew 45 → **54 passing**; ruff/mypy/tsc clean
-  (no new findings).
+  `GET /projects/{id}/budget` roll-up, finance service (`app/services/finance.py`),
+  migration `c6d8e0f2a415`, 12 tests, `JobCostsPanel` frontend. Suite grew
+  45 → **57 passing**.
+- **M10 — Project Lifecycle & Admin (Aug 11):**
+  - Migration `d7e9f1a2b3c4` adds unique `project_code`, `created_by`,
+    `completed_at/by`, `archived_at/by`, `restored_at/by`, extends
+    `project_status` enum with `draft` + `archived` (existing values kept).
+  - `app/services/projects.py` — `generate_project_code()` (`PRJ-YYYY-####`,
+    max-seq + unique-constraint retry), thin-services pattern.
+  - `POST /projects` (admin) now auto-generates the code and creates **DRAFT**;
+    `ProjectUpdate` no longer accepts `status` or `budget_spent`.
+  - Admin-only, audit-coupled transition endpoints: `activate`
+    (DRAFT/PLANNING/ON_HOLD→ACTIVE), `complete` (ACTIVE→COMPLETED, sets 100% +
+    `completed_at/by`), `archive` (ACTIVE/COMPLETED→ARCHIVED, sets `archived_at/by`;
+    rejects DRAFT/PLANNING/ON_HOLD), `restore` (ARCHIVED→COMPLETED if it was
+    completed before archiving else ACTIVE, sets `restored_at/by`).
+  - Archive visibility: non-admins get **404** on archived projects (existence
+    does not leak); `GET /projects` excludes ARCHIVED unless admin/proc pass
+    `?include=archived`. `get_project_or_404` + `can_access_archived` in
+    `app/api/project_access.py`. `get_project_or_404` now used by every
+    project-scoped route in `api/v1/projects.py` (was ad-hoc per route).
+  - Seed gating resolved: demo users/projects load only when
+    `ICE_SEED_DEMO=true` (env-flag only, no per-row `is_demo` column).
+  - Frontend: `ProjectStatus`/`Project` types extend (`project_code`, lifecycle
+    fields, `draft`/`archived`); Command Center admin "New site" modal + "Show
+    archived" toggle; ProjectCard shows `project_code` + per-status badge tone;
+    ProjectDetail lifecycle action menu (admin, legal-from-status only) +
+    archival banner + lifecycle date rows; child panels freeze (read-only) when
+    archived.
+  - Tests: `tests/test_project_lifecycle.py` — 12 tests (transitions chain,
+    RBAC 403s, invalid-transition 400s, archive filtering, archived-404 vs
+    assigned visibility, audit rows, codegen uniqueness/seq-retry, descendants
+    + budget invariant across archive/restore). Suite **57 → 69 passing**.
+- Verified budgets stay consistent across ARCHIVE/RESTORE: `budget_spent ==
+  SUM(job_costs)` invariant holds after archive → restore round-trip.
 
-## 2. Files created / modified (all UNCOMMITTED)
+## 2. Files changed in this session (M10 — implemented, NOT yet committed)
 
-Created:
-- `backend/app/services/` + `app/services/inventory.py` (thin services layer starts here)
-- `backend/alembic/versions/a4b6c8d9e2f3_m1_stock_movements_index.py`
-- `backend/alembic/versions/b5c7d9e1f203_m2_unique_project_assignments.py`
-- `backend/tests/test_projects.py`
-- `frontend/src/components/ProjectAssignments.tsx`
-- `docs/SESSION_NOTES.md` (this file)
-- `backend/app/services/finance.py` (M4 — budget roll-up domain math)
-- `backend/app/schemas/finance.py` (M4 — job-cost + budget rollup contracts)
-- `backend/app/api/v1/finance.py` (M4 — job-cost CRUD + budget roll-up routes)
-- `backend/alembic/versions/c6d8e0f2a415_m4_job_costs_cost_code.py` (M4)
-- `backend/tests/test_finance.py` (M4 — 9 tests)
-- `frontend/src/components/JobCostsPanel.tsx` (M4)
-
-Modified: `backend/app/api/v1/inventory.py`, `backend/app/api/v1/projects.py`,
-`backend/app/models/project.py`, `backend/app/schemas/inventory.py`,
-`backend/app/schemas/project.py`, `backend/tests/test_inventory.py`,
-`frontend/src/pages/ProjectDetail.tsx`, `frontend/src/types/index.ts`,
-`docs/CURRENT_STATE.md`, `docs/ARCHITECTURE.md`.
-Modified (M4): `backend/app/models/finance.py` (CostCode enum, drop `category`),
-`backend/app/models/__init__.py`, `backend/app/api/v1/router.py`,
-`frontend/src/pages/ProjectDetail.tsx`, `frontend/src/types/index.ts`,
-`docs/CURRENT_STATE.md`.
+Backend: `alembic/versions/d7e9f1a2b3c4_m10_project_lifecycle.py` (new),
+`app/models/project.py`, `app/schemas/project.py`, `app/api/v1/projects.py`,
+`app/api/project_access.py`, `app/services/projects.py` (new), `app/seed.py`,
+`tests/conftest.py`, `tests/test_project_lifecycle.py` (new).
+Frontend: `src/types/index.ts`, `src/lib/api.ts` (project helpers),
+`src/pages/CommandCenter.tsx`, `src/pages/ProjectDetail.tsx`,
+`src/components/ProjectCard.tsx`.
+Docs: `docs/CURRENT_STATE.md`, `docs/ROADMAP.md`, `docs/SESSION_NOTES.md`,
+`docs/M10 — Project Lifecycle & Admin: Implementation Plan.md` (new, planning).
 
 ## 3. Important decisions
 
 - M1 first (correctness bug, independent, low blast radius), then M2
-  (unlocks real RBAC and M3/M6 scoping).
+  (unlocks real RBAC), then M4 (job costing), then M10 (admin lifecycle).
 - Reconciliation is a **report-only** endpoint (admins fix drift via an ADJUSTED
   movement), not an auto-correcting job.
-- Thin `services/` layer introduced early (route now stays lean); further Phase 3
-  domain logic (finance, health) expected to follow the same pattern.
-- Assignment endpoints are admin-only and restrict assignable roles to
-  supervisor/client (admin/proc see all projects by role).
-- DB migration applied to dev DB is now at rev `c6d8e0f2a415` (head).
+- Thin `services/` layer pattern (`finance.py`, `projects.py`) for Phase 3
+  domain logic; routes stay auth/audit plumbing.
+- **M10 decisions (Aug 11):**
+  - Lifecycle transitions are **admin-only, audited, dedicated endpoints**
+    (`activate`/`complete`/`archive`/`restore`); `PATCH /projects` refuses
+    `status`/`budget_spent` so status moves only through the state machine.
+  - **Seed gating = env flag only** (`ICE_SEED_DEMO`); no `is_demo` column —
+    the implementation-plan option (a) "env-flag only" was chosen.
+  - **Enum extended, not replaced:** `planning|active|on_hold|completed` kept,
+    `draft|archived` appended → no destructive enum change.
+  - ARCHIVED is a soft terminal state: hidden from non-admins (404, not 403),
+    read-only/frozen in UI, assignments endpoints reject writes, never DELETE.
+  - Transitions are read-modify-write **without** `SELECT ... FOR UPDATE` — noted
+    as a Known-limitation/hardening item (M1/M4 already row-lock; same fix here).
+- **M10 before M3/M5** (health + invoicing operate on a lifecycle-aware project
+  universe; only ACTIVE compute health / generate invoices).
+- **M9 before M11** (refresh rotation + revocation + deactivation cutoff must
+  exist before Google is trusted with sessions).
+- **M6 before real clients on Google** (role-scoped contract so Google-linked
+  clients never see budget fields).
 
 ## 4. Current project state
 
-Phases 1 & 2 complete and intact; Phase 3 M1/M2/M4 in the working tree (uncommitted).
-54/54 backend tests pass against real Postgres.
-Migrations `a4b6c8d9e2f3`, `b5c7d9e1f203`, `c6d8e0f2a415` applied to the dev DB.
+Phases 1 & 2 complete and intact; Phase 3 M1/M2/M4 committed (`1e046ec`), M10
+implemented but **uncommitted** (69/69 backend tests pass against real Postgres;
+frontend `tsc`+`vite build` and `oxlint` clean; ruff app+tests 4 pre-existing
+F401s, mypy 12 pre-existing errors — nothing new introduced).
+Migrations `a4b6c8d9e2f3` + `b5c7d9e1f203` + `c6d8e0f2a415` applied to the dev DB;
+migration `d7e9f1a2b3c4` (M10) is a new revision on HEAD, not yet applied.
 
-## 5. Current Phase
+## 5. Current phase
 
-Phase 3 — "Integrity, Operable RBAC & the Finance Pillar".
+Phase 3 — "Integrity, Operable RBAC, Admin Lifecycle & the Finance Pillar".
 
 ## 6. Current milestone
 
-M4 (job costing) — **done**, awaiting commit. (M1+M2 from the prior session also uncommitted.)
+**M10 — Project Lifecycle & Admin** is implemented; next up is **M3 — computed
+health** (was "M5 invoicing").
 
-## 7. Not yet implemented (Phase 3 remaining)
+## 7. Phase 3 remaining, in execution order
 
-- **M5** Invoicing (milestone → invoice generation).
-- **M3** Computed project health (+ audited manual override) — **budget part now unblocked by M4** (budget_spent is derived; health can compute from real spend vs total).
-- **M6** Client view-only scope (no budget fields for client role).
-- **M7** Task date-order validation on update + dependency cycle detection.
-- **M8** Idempotency keys on movement/site-log/invoice POSTs.
-- **M9** Token security: refresh rotation + server-side revocation.
-- Phase 3 DB stubs still pending: unique `inventory_items (project_id, name)`,
-  `daily_site_logs (project_id, log_date)`; finance indexes (done for job_costs);
-  stock_movements/audit_logs list indexes.
-- Pre-existing debt (not in Phase 3 scope to fix unilaterally): ruff 4 F401 errors,
-  mypy 10 errors, no `test_projects.py` CRUD coverage, client reads budgets.
+1. **M3 — Computed project health** (+ audited manual override) over ACTIVE only.
+2. **M5 — Invoicing** (milestone → invoice generation) gated to ACTIVE.
+3. **M6 — Client view-only scope** (no budget fields for client role).
+4. **M7 — Task date-order validation on update + dependency cycle detection.**
+5. **M8 — Idempotency keys on movement/site-log/invoice POSTs.**
+6. **M9 — Token security:** refresh rotation + server-side revocation.
+7. **M11 — Google Sign-In** (NEW): Google authenticates only; ICE owns identity/
+   role/assignments/permissions; never auto-grants ADMIN; inherits M9 sessions.
+   Real-user rollout gate — after Phase 4 infra.
+
+Phase 3 DB stubs still pending: unique `inventory_items (project_id, name)`,
+`daily_site_logs (project_id, log_date)`; `invoices` milestone mapping (M5);
+stock_movements/audit_logs list indexes; lifecycle-transition row lock (hardening).
+Pre-existing debt (not in Phase 3 scope to fix unilaterally): ruff 4 F401 errors,
+mypy 12 errors, no project CRUD/PATCH-RBAC test coverage beyond lifecycle, client
+reads budgets.
 
 ## 8. Exact next action
 
-1. Commit the uncommitted work (M1+M2 from last session **and** M4 from today) —
-   stage the files listed in §2; nothing after `d0a9e5c` is committed.
-2. Start **M5 — Invoicing**: invoice CRUD + milestone→invoice generation rules
-   (e.g. "Slab Completed → 20%"), reusing `models/finance.py` `Invoice` schema +
-   `finance.py` router; then M3 (computed health) can use derived budget.
-   Update `CURRENT_STATE.md` after completion.
+1. Apply M10 migration to the dev DB and smoke-test:
+   `docker compose up -d postgres`, `alembic upgrade head` (backend container
+   runs migrations on start), create a project via UI and walk the lifecycle.
+2. Commit the M10 work when the owner asks.
+3. Then **M3 — Computed project health** (schedule + budget + safety signals,
+   audited admin override) over ACTIVE projects only.
 
-## 9. Unresolved questions / issues
+## 9. Ambiguities / conflicts captured from the M10+M11 requirements
+
+- ~~Who transitions lifecycle vs the old `PATCH /projects` supervisor path~~ —
+  **RESOLVED (M10):** transitions are admin-only dedicated endpoints; PATCH no
+  longer accepts `status`.
+- ~~Seed data: mark demo rows vs env-flag only~~ — **RESOLVED (M10):** env-flag
+  only (`ICE_SEED_DEMO`), no schema marker.
+- ~~Status model: extend enum vs replace~~ — **RESOLVED (M10):** extended
+  (`draft`/`archived` appended; existing values intact).
+- `Project.budget_spent` remains derived (`== SUM(job_costs)`, M4 invariant);
+  lifecycle/archive must not bypass it — verified by test across archive/restore.
+- Future POs (Phase 5) map to projects — archived projects must stay read-only
+  for all historical child records (UI freezes panels; API leaves mutation
+  endpoints open to admin — flag if PO-posting must be blocked on ARCHIVED).
+- Google email change / deactivation must map cleanly onto `google_sub` and the
+  existing `is_active` cutoff. **Still open (M11).**
+
+## 10. Unresolved questions / issues
 
 - Postgres container **auto-stops** between sessions; restart with
   `docker compose up -d postgres` before running tests.
 - Test env: pinned `requirements-dev.txt` was installed into the `py310_env`
   conda env so `pytest`/`ruff`/`mypy` run there
   (`/opt/miniconda3/envs/py310_env/bin/python -m pytest tests/ -q`).
-- TBD from user: ordering/split of M4 vs M5 vs M3, and whether M9 (token
-  hardening) should land before finance work.
+- M10 migration not yet applied to the dev DB (revision written but `alembic
+  upgrade head` not run this session).
+- M11 owner decisions still required (see §8/§9 in previous notes).
 - Deviating from roadmap UI guidance (replacing `alert()` with inline errors)
   applies to new components only; existing panels still use `alert()`.

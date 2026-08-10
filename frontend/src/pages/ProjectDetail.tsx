@@ -1,8 +1,15 @@
 import { useParams, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Loader2 } from "lucide-react";
-import { api } from "../lib/api";
-import type { Project } from "../types";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Archive,
+  ArrowLeft,
+  CheckCircle2,
+  Loader2,
+  Play,
+  RotateCcw,
+} from "lucide-react";
+import { api, transitionProject } from "../lib/api";
+import type { Project, ProjectStatus } from "../types";
 import { AppShell } from "../components/AppShell";
 import { HealthDot } from "../components/HealthDot";
 import { ProjectTimeline } from "../components/ProjectTimeline";
@@ -28,18 +35,44 @@ function formatDate(value: string) {
   });
 }
 
+function formatDateOrDash(value: string | null) {
+  return value ? formatDate(value) : "—";
+}
+
+const LIFE_ACTIONS: {
+  action: "activate" | "complete" | "archive" | "restore";
+  icon: typeof Play;
+  label: string;
+  needsConfirm: boolean;
+  confirmMsg: string;
+}[] = [
+  { action: "activate", icon: Play, label: "Activate", needsConfirm: false, confirmMsg: "" },
+  { action: "complete", icon: CheckCircle2, label: "Mark complete", needsConfirm: false, confirmMsg: "" },
+  {
+    action: "archive",
+    icon: Archive,
+    label: "Archive",
+    needsConfirm: true,
+    confirmMsg: "Archiving hides this project from non-admin users. Continue?",
+  },
+  { action: "restore", icon: RotateCcw, label: "Restore", needsConfirm: false, confirmMsg: "" },
+];
+
+// Only certain transitions are legal from a given status; the backend
+// enforces this authoritatively and the menu only surfaces the legal ones.
+const VALID_FROM: Record<ProjectStatus, ("activate" | "complete" | "archive" | "restore")[]> = {
+  draft: ["activate"],
+  planning: [],
+  active: ["complete", "archive"],
+  on_hold: [],
+  completed: ["archive"],
+  archived: ["restore"],
+};
+
 export function ProjectDetail() {
   const { projectId } = useParams<{ projectId: string }>();
   const { user } = useAuth();
-
-  // Mirrors backend RBAC: admin/supervisor manage the timeline & site
-  // logs, admin/procurement manage inventory. The API enforces this
-  // authoritatively — these just keep the UI from offering actions that
-  // would 403 anyway.
-  const canWriteTimeline = user?.role === "admin" || user?.role === "site_supervisor";
-  const canWriteInventory = user?.role === "admin" || user?.role === "procurement_manager";
-  const canWriteFinance = user?.role === "admin" || user?.role === "procurement_manager";
-  const isAdmin = user?.role === "admin";
+  const queryClient = useQueryClient();
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", projectId],
@@ -48,6 +81,34 @@ export function ProjectDetail() {
       return data;
     },
   });
+
+  const isAdmin = user?.role === "admin";
+  const isArchived = project?.status === "archived";
+
+  // Mirrors backend RBAC: admin/supervisor manage the timeline & site
+  // logs, admin/procurement manage inventory. The API enforces this
+  // authoritatively — these just keep the UI from offering actions that
+  // would 403 anyway. Archived projects are frozen in the UI.
+  const canWriteTimeline =
+    !isArchived && (user?.role === "admin" || user?.role === "site_supervisor");
+  const canWriteInventory =
+    !isArchived && (user?.role === "admin" || user?.role === "procurement_manager");
+  const canWriteFinance =
+    !isArchived && (user?.role === "admin" || user?.role === "procurement_manager");
+
+  const transition = useMutation({
+    mutationFn: async (action: "activate" | "complete" | "archive" | "restore") => {
+      return transitionProject(projectId!, action);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+
+  const legalActions = project
+    ? VALID_FROM[project.status]
+    : [];
 
   return (
     <AppShell>
@@ -67,15 +128,67 @@ export function ProjectDetail() {
 
       {project && (
         <div className="rounded-md border border-ink-border bg-ink-surface p-6 shadow-panel">
+          {isArchived && (
+            <div className="mb-4 flex items-start gap-2 rounded-md border border-ink-border bg-ink px-3 py-2 text-xs text-paper-muted">
+              <Archive size={14} className="mt-0.5 shrink-0" />
+              <span>
+                This project is archived. It's hidden from non-admin users and
+                is presented read-only until restored.
+                {project.archived_at && (
+                  <span className="text-paper-faint">
+                    {" "}
+                    Archived {formatDate(project.archived_at)}.
+                  </span>
+                )}
+              </span>
+            </div>
+          )}
+
           <p className="font-mono text-xs tracking-widest text-blueprint-400">
-            SITE DETAIL
-          </p>
-          <h1 className="mt-1 text-xl font-semibold text-paper">
-            {project.name}
-          </h1>
-          <p className="mt-1 text-sm text-paper-muted">
-            {project.client_name} · {project.site_address}
-          </p>
+              SITE DETAIL
+            </p>
+            <h1 className="mt-1 text-xl font-semibold text-paper">
+              {project.name}
+            </h1>
+            <p className="mt-1 text-sm text-paper-muted">
+              <span className="font-mono text-xs text-blueprint-400">
+                {project.project_code}
+              </span>{" "}
+              · {project.client_name} · {project.site_address}
+            </p>
+
+          {isAdmin && legalActions.length > 0 && (
+            <div className="mt-5">
+              <p className="mb-2 font-mono text-xs tracking-widest text-blueprint-400">
+                LIFECYCLE
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {LIFE_ACTIONS.filter((a) => legalActions.includes(a.action)).map((a) => {
+                  const Icon = a.icon;
+                  const run = () => {
+                    if (a.needsConfirm && !window.confirm(a.confirmMsg)) return;
+                    transition.mutate(a.action);
+                  };
+                  return (
+                    <button
+                      key={a.action}
+                      onClick={run}
+                      disabled={transition.isPending}
+                      className="flex items-center gap-1.5 rounded border border-ink-border bg-ink px-3 py-1.5 text-xs text-paper hover:bg-ink-raised hover:text-paper disabled:opacity-50"
+                    >
+                      <Icon size={14} />
+                      {a.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {transition.isError && (
+                <p className="mt-2 text-xs text-status-red">
+                  Couldn't update the project lifecycle. Try again.
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div className="rounded-md border border-ink-border p-3">
@@ -119,6 +232,18 @@ export function ProjectDetail() {
               <span className="text-paper-muted">Budget spent</span>
               <span className="text-paper">
                 {formatCurrency(project.budget_spent)}
+              </span>
+            </div>
+            <div className="flex justify-between border-b border-ink-border py-2">
+              <span className="text-paper-muted">Completed</span>
+              <span className="text-paper">
+                {formatDateOrDash(project.completed_at)}
+              </span>
+            </div>
+            <div className="flex justify-between border-b border-ink-border py-2">
+              <span className="text-paper-muted">Archived</span>
+              <span className="text-paper">
+                {formatDateOrDash(project.archived_at)}
               </span>
             </div>
           </div>

@@ -1,8 +1,10 @@
 # Product Roadmap — from Current State to Product Vision
 
 **Inputs:** `docs/PRODUCT_REQUIREMENTS.md` (vision), `docs/CURRENT_STATE.md` (reality), `docs/ARCHITECTURE.md` (implementation).
-**Date:** August 9, 2026
+**Date:** August 10, 2026
 **Method:** Phases are designed to close **critical architecture gaps → data integrity → security → core business workflows → production readiness → scalability → AI/ML**, in that order. They are **not** a continuation of the original SRS numbering.
+
+> **Aug 10 change:** two requirements added to **Phase 3** as mandates — **Project Lifecycle & Admin** (M10) and **Google Sign-In** (M11). Both were flagged after M4 shipped; they gate real-user rollout (M11) and make the Command Center and every downstream phase operate on lifecycle-aware, DB-driven projects instead of seed/demo data (M10). See the Phase 3 milestone sequence below.
 
 ---
 
@@ -16,59 +18,101 @@
 
 ---
 
-## Phase 3 — Integrity, Operable RBAC & the Finance Pillar
+## Phase 3 — Integrity, Operable RBAC, Admin Lifecycle & the Finance Pillar
 
-**Goal:** Make existing functionality trustworthy and operationally real: no lost stock updates, real per-project access control, and the finance pillar that the current schema only scaffolds. This is the "make it correct" phase.
+**Goal:** Make existing functionality trustworthy and operationally real: no lost stock updates, real per-project access control, admin-managed project lifecycle, and the finance pillar that the current schema only scaffolds. This is the "make it correct" phase, and it is also the **real-user rollout gate** (Google Sign-In lands here).
 
 **Business value:** High. Stock numbers become reliable; users can actually be onboarded per site; budgets become real (computed, not typed); milestone invoices generate revenue paperwork automatically.
 
 **Features**
-- **MUST:** Row-locked inventory movements (`SELECT ... FOR UPDATE`) + periodic ledger reconciliation.
-- **MUST:** Project-assignment management API + UI (assign/unassign users to projects; admin-only).
-- **MUST:** Project health computed from real signals (schedule vs. dates → timeline; job costs vs. budget → budget; site safety flags → safety) with manual-override permitted + audited.
-- **MUST:** Job Costing — create/list `JobCost` entries with a **cost-code enum** (masonry, plumbing, etc.); `Project.budget_spent` derived from job costs (+ manual adjustment only if unavoidable).
-- **MUST:** Invoicing — `Invoice` CRUD; milestone → invoice generation rules (e.g., "Slab Completed → 20%").
-- **SHOULD:** Client view-only access: invoices + progress, no budget figures (role-scoped response contract).
-- **SHOULD:** Task date-order validation on update + dependency cycle detection.
-- **SHOULD:** Idempotency keys on POSTs (movements, site logs, invoices).
+- **MUST:** Row-locked inventory movements (`SELECT ... FOR UPDATE`) + periodic ledger reconciliation. *(DONE — M1)*
+- **MUST:** Project-assignment management API + UI (assign/unassign users to projects; admin-only). *(DONE — M2)*
+- **MUST:** Job Costing — create/list `JobCost` entries with a **cost-code enum** (masonry, plumbing, etc.); `Project.budget_spent` derived from job costs (+ manual adjustment only if unavoidable). *(DONE — M4)*
+- **MUST:** **Project Lifecycle & Admin (NEW — M10)** — admin-managed, database-driven projects replacing seed/demo data as the permanent source. DRAFT → ACTIVE → COMPLETED → ARCHIVED lifecycle with no hard-deletes; auto-generated unique project codes; lifecycle-change audit (who/when); archived hidden from normal lists, retained in reporting; seed/demo data gated behind a dev-only flag.
+- **MUST:** Project health computed from real signals (schedule vs. dates → timeline; job costs vs. budget → budget; site safety flags → safety) with manual-override permitted + audited. *(M3 — ordered AFTER M10 so health only computes over ACTIVE projects)*
+- **MUST:** Invoicing — `Invoice` CRUD; milestone → invoice generation rules (e.g., "Slab Completed → 20%"). *(M5 — ordered AFTER M10 so lifecycle gates invoicing on ACTIVE projects)*
+- **SHOULD:** Client view-only access: invoices + progress, no budget figures (role-scoped response contract). *(M6 — must land before real clients use Google Sign-In)*
+- **SHOULD:** Task date-order validation on update + dependency cycle detection. *(M7)*
+- **SHOULD:** Idempotency keys on POSTs (movements, site logs, invoices). *(M8)*
+- **MUST:** Token security — refresh-token rotation + server-side revocation + optional httpOnly cookie. *(M9 — prerequisite for M11)*
+- **MUST:** **Google Sign-In (NEW — M11)** — Google as **authentication only**; ICE retains identity, roles, authorizations, project assignments, permissions. Google never grants ADMIN. Session handling inherits M9 rotation/revocation/deactivation cutoff. Plans land here while Phase 4 provides the deploy/observability rails before real users arrive.
 
-**Dependencies:** existing `job_costs`/`invoices` tables, `project_assignments`, `project_access.py` helper, `record_audit()`.
+---
+
+### Phase 3 milestone sequence (revised Aug 10)
+
+Execution order (M1/M2/M4 shipped):
+
+1. **M1 — inventory integrity** — DONE
+2. **M2 — assignment management** — DONE
+3. **M4 — job costing** — DONE
+4. **M10 — Project Lifecycle & Admin** (NEW) — DONE. Foundation for everything that follows: DB-driven projects, lifecycle state machine + audit, archive visibility, seed gating. See `docs/CURRENT_STATE.md` §4b.
+5. **M3 — computed health** — reads lifecycle-aware project set (skip non-ACTIVE).
+6. **M5 — invoicing** — lifecycle-gated (only ACTIVE generate; COMPLETED frozen; ARCHIVED hidden).
+7. **M6 — client view-only scope** — before real clients can authenticate.
+8. **M7 — task validation** — independent; flexible slot.
+9. **M8 — idempotency keys** — independent; flexible slot.
+10. **M9 — token security** — prerequisite for Google Sign-In.
+11. **M11 — Google Sign-In** (NEW) — the real-user rollout gate; after Phase 4 rails.
+
+Ordering rationale:
+- **M10 before M3 and M5:** computed health and milestone invoicing must operate on a lifecycle-aware project universe (only ACTIVE compute health / generate invoices). Building them on the current seed-driven status model would force rework when lifecycle lands. Similarly, invoicing must not fire on COMPLETED/ARCHIVED projects.
+- **M9 before M11:** Google only authenticates; ICE's JWT/session layer must already rotate + revoke refresh tokens and cut off deactivated users before external login is trusted with them.
+- **M6 before real clients on Google:** Google-authenticated clients must never see budget fields, so the M6 role-scoped contract must exist before a real client signs in.
+
+**Dependencies:** existing `job_costs`/`invoices` tables, `project_assignments`, `project_access.py` helper, `record_audit()`, auth `core/security.py`.
 
 **Architecture changes**
-- Introduce a thin `services/` layer for the finance + health computation logic (first step away from inline handler logic).
+- Introduce a thin `services/` layer for the finance + health + lifecycle computation logic (first step away from inline handler logic).
 - Health computation can run synchronously on read/write for Phase 3 (no worker yet).
+- Add an OAuth2/OIDC client (Google) behind the auth service; ICE keeps issuing its own JWT pairs (access + rotated refresh). Google identity is a secondary auth factor bound to an ICE user, never a role source.
 
 **Database changes**
-- `job_costs`: add `cost_code` (enum/string) column; index `(project_id, incurred_on)`.
-- `invoices`: add `milestone_definition`/`contract_mapping` reference; keep `external_*` columns.
-- Unique constraints: `project_assignments (project_id, user_id)`; `inventory_items (project_id, name)`; `daily_site_logs (project_id, log_date)` (or allow-override policy column).
+- `job_costs`: add `cost_code` (enum/string) column; index `(project_id, incurred_on)`. *(DONE — M4)*
+- `invoices`: add `milestone_definition`/`contract_mapping` reference; keep `external_*` columns. *(M5)*
+- **(M10)** `projects`: add unique `project_code varchar` (auto-generated, e.g. `PRJ-YYYY-####`), lifecycle columns `created_by`, `status` extension to DRAFT/ARCHIVED (keep existing enum values + add), `completed_at`/`completed_by`, `archived_at`/`archived_by`, `restored_at`/`restored_by`. No hard deletes — a soft lifecycle, never `DELETE`.
+- **(M10)** Add `is_demo`/seed marking OR a `seed_source` column so demo rows are identifiable and gagable; add `demo` flag to `seed.py` own runs (dev-only, env-gated).
+- **(M11)** `users`: add nullable `google_sub` (unique index) + `google_email` (read-only sync) + `password_hash_nullable` migration so Google-linked users can exist without a local password; keep `hashed_password` for retained username/password path.
+- **(M11)** New immutable-ish `auth_events`/`refresh_sessions` row per issued refresh token for rotation + revocation (M9); store `google_email` change history in `audit_logs`.
+- Unique constraints: `project_assignments (project_id, user_id)` *(DONE — M2)*; `inventory_items (project_id, name)`; `daily_site_logs (project_id, log_date)` (or allow-override policy column).
 - `stock_movements` + `audit_logs`: add composite indexes for listing (`created_at DESC`).
 - Alembic migration for all above.
 
 **API changes**
-- `POST/DELETE /api/v1/projects/{id}/assignments` (admin) — or `PATCH /api/v1/users/{id}/assignments`.
-- `GET/POST /api/v1/projects/{id}/job-costs`, `GET /api/v1/projects/{id}/budget` (computed roll-up).
-- `GET/POST/PATCH /api/v1/projects/{id}/invoices`.
-- Health fields: computed + override endpoint (`PATCH /api/v1/projects/{id}/health-override`).
-- `Idempotency-Key` header handling on movement/log/invoice POSTs.
+- *(M10)* `POST /projects` (admin, generates `project_code`, sets `created_by`, default DRAFT); `GET /projects` filters NON-ARCHIVED by default, `?include=archived` for admin; `GET/PATCH /projects/{id}`; lifecycle transitions as first-class audited actions: `POST /projects/{id}/activate`, `POST .../complete`, `POST .../archive`, `POST .../restore` (admin-only; each records who/when via `record_audit`). `PATCH` refuses lifecycle fields (status moves only via dedicated actions).
+- *(M10)* `GET /projects/{id}` and reporting endpoints remain readable for COMPLETED; archived requires `?include=archived` + admin.
+- `POST/DELETE /api/v1/projects/{id}/assignments` (admin) — or `PATCH /api/v1/users/{id}/assignments`. *(DONE — M2)*
+- `GET/POST /api/v1/projects/{id}/job-costs`, `GET /api/v1/projects/{id}/budget` (computed roll-up). *(DONE — M4)*
+- `GET/POST/PATCH /api/v1/projects/{id}/invoices`. *(M5)*
+- Health fields: computed + override endpoint (`PATCH /api/v1/projects/{id}/health-override`). *(M3)*
+- `Idempotency-Key` header handling on movement/log/invoice POSTs. *(M8)*
+- *(M11)* `GET /auth/google/authorize` (redirect), `GET /auth/google/callback` (OIDC code exchange → link-or-login ICE user → issue ICE JWT pair), `POST /auth/logout` (server-side revoke, joins M9). Unknown-Gmail policy: **admin invite/approval** OR **reject** (owner decision, see §Conflicts).
+- *(M11)* Admin creates a user without password (invitation): `POST /users` accepts `no password` when `google_only=true`; user links identity on first Google sign-in with matching verified email.
 
 **Frontend changes**
-- Project Detail: Job Costs panel (add/list with cost code), Invoices panel, budget vs. spent computation.
-- Admin user management: assign supervisors/clients to projects.
-- Client view house view: replace budget figures with photos/invoices per Phase 6 landing earlier if scope permits.
+- Project Detail: Job Costs panel (add/list with cost code), Invoices panel, budget vs. spent computation. *(job costs DONE — M4)*
+- *(M10)* Command Center: admin "Create Project" form (auto code display), lifecycle action menu (Activate / Complete / Archive / Restore) on project cards + detail; archive filter toggle for admin; completed projects keep appearing under reporting/completed filter.
+- Admin user management: assign supervisors/clients to projects; *(M10 + M11)* invite flow (create without password, "pending Google link" status).
+- Client view house view: replace budget figures with photos/invoices per Phase 6 landing earlier if scope permits. *(M6)*
+- *(M11)* Login page: "Sign in with Google" button + `/auth/google/callback` SPA route handling; keep username/password form only if retained (owner decision).
 - Surface mutation errors consistently (replace silent failures + `alert()`).
 
 **Testing requirements**
 - **MUST:** `test_projects.py` (CRUD, PATCH RBAC incl. assigned-only supervisor, health override audit).
-- **MUST:** Finance tests (cost create/roll-up correctness, milestone invoice generation, invoice RBAC incl. client read isolation).
+- **MUST:** `test_project_lifecycle.py` (M10) — DRAFT→ACTIVE→COMPLETED→ARCHIVED→RESTORE transitions valid/invalid validated; archived excluded from default lists but present in reporting + `?include=archived`; lifecycle transition RBAC (admin-only); audit rows carry actor + timestamp; project-code uniqueness + regeneration on retry; no hard-delete path exists for any state; historical child data (job costs, inventory, site logs, assignments) intact after COMPLETE/ARCHIVE.
+- **MUST:** Finance tests (cost create/roll-up correctness, milestone invoice generation, invoice RBAC incl. client read isolation, lifecycle gating: no invoices generated for COMPLETED/ARCHIVED).
 - **MUST:** Inventory concurrency test (two parallel movements → both reflected; no lost update).
 - **MUST:** Assignment API tests (admin-only, isolation effects on supervisors/clients).
+- **MUST:** `test_google_auth.py` (M11) — OIDC code-exchange success links by verified email to existing ICE user preserving role/assignments; unknown email rejected or goes to invite path per decision; Google never grants admin; google_sub unique + unlink/relink; deactivated ICE user cut off at callback; refresh rotation + revocation enforced on the Google session; email-change handling (old link invalid); audit login/auth events.
+- **MUST:** M9 token tests (rotation: old refresh invalid after use; revocation: logout kills server-side; deactivated user blocked on next use).
 
 **Security considerations**
-- Role-scope project responses per role; never leak `budget_*` to client.
-- Idempotency-key validation (server-side key namespace per user).
+- Role-scope project responses per role; never leak `budget_*` to client. *(M6)*
+- Idempotency-key validation (server-side key namespace per user). *(M8)*
+- **M10:** lifecycle transitions admin-only + fully audited (actor, timestamp, old/new state). ARCHIVED projects are read-only for admins and invisible to others; never a DELETE endpoint. Project codes validated/format-enforced; uniqueness guaranteed.
+- **M11:** Google is authentication only — ICE user record/role/assignments/permissions are the authorization source; **Google auth must never auto-grant ADMIN**. Validate OIDC `iss`/`aud`/`email_verified`, PKCE/nonce + state on callback; link by verified email only; deactivated users blocked; refresh rotation/revocation (M9) inherited; audit every auth event (login/refresh/logout/email-change). Account-linking risk: prevent silent cross-account takeover — re-verify email + require explicit consent if `google_sub` already bound to another ICE user.
 - Audit every finance and assignment write.
-- Continue token work: **refresh-token rotation + server-side revocation** + optional httpOnly cookie (security debt from Phase 1; do in this phase — see acceptance).
+- Continue token work: **refresh-token rotation + server-side revocation** + optional httpOnly cookie (security debt from Phase 1; do before M11 — see milestone sequence).
 
 **AI/ML considerations:** none required. But record **structured** cost data (cost codes, milestone events) — this becomes a future feature.
 
@@ -77,7 +121,9 @@
 - A supervisor/client blocked from projects after unassignment within one request.
 - `Project.budget_spent` equals `SUM(job_costs)`; milestone completion creates the configured `%` invoice as draft.
 - Client role cannot read any budget field; can read own invoices.
-- No audit row missing `ip_address`; refresh tokens rotate and deactivated users are cut off immediately.
+- No audit row missing `ip_address`; refresh tokens rotate and deactivated users are cut off immediately. *(M9)*
+- **(M10)** Admin creates a project → gets a unique auto-generated code; project can be walked DRAFT→ACTIVE→COMPLETED→ARCHIVED and back (RESTORE) only via audited admin actions; ARCHIVED absent from normal project lists yet present in reporting; no project state can be hard-deleted; seed/demo projects exist only when a dev/demo flag is set.
+- **(M11)** Sign-in with Google authenticates an existing ICE user (role + project assignments unchanged) or routes unknown emails per the chosen policy; Google never yields ADMIN; Google-linked sessions rotate/revoke refresh tokens and are blocked for deactivated users.
 
 ---
 
@@ -339,11 +385,13 @@
 
 | | MUST HAVE (before scaling) | SHOULD HAVE | NICE TO HAVE |
 |---|---|---|---|
-| **Phase 3** | Row-locked ledger; assignments API; computed health; job costing + invoices; client role-scope; refresh rotation | health-override UI; task cycle detection | — |
+| **Phase 3** | Row-locked ledger; assignments API; project lifecycle+admin (M10); computed health; job costing + invoices; client role-scope; Google Sign-In (M11); refresh rotation + revocation | health-override UI; task cycle detection | — |
 | **Phase 4** | CI/CD; IaC+deploy; secrets; logging/monitoring; backups; rate-limit fix; structured errors | worker + scheduled health; pagination/indexing | load test; npm audit/pip-audit |
 | **Phase 5** | Vendors/POs; QR/photo verification; 3-location inventory; schedule-driven low-stock; upload-hardening | PO approvals; roll-up view | forecast from weather |
 | **Phase 6** | Photo+voice capture; offline-first sync; hold-point gating; attendance/toolbox; mobile-first UI | notifications (vendor/stock) | — |
 | **Phase 7** | Data pipeline; delay-risk with review trail; feature flags; model_runs audit | CV QC review queue | BOQ generation; portfolio forecast |
-| **Phase 8** | — | — | multi-tenant, compliance, SSO |
+| **Phase 8** | — | — | multi-tenant, compliance, **SSO/OIDC beyond Google (M11 is the foundation)** |
 
-**Implicit guardrail:** no phase ships to production without the Phase 4 observability + CI + backup rails. If budget forces a cut, preserve: **Phase 3 (integrity/finance) → Phase 4 (production) → Phase 6 (field photos/offline) → Phase 7 (delay-risk)**; the procurement phase is the one most safe to trim/reorder.
+**Implicit guardrail:** no phase ships to production without the Phase 4 observability + CI + backup rails. If budget forces a cut, preserve: **Phase 3 (integrity/finance + lifecycle + Google) → Phase 4 (production) → Phase 6 (field photos/offline) → Phase 7 (delay-risk)**; the procurement phase is the one most safe to trim/reorder.
+
+**Sequencing guardrail (Aug 10):** within Phase 3, **M10 (Project Lifecycle & Admin) must precede M3 and M5**, and **M9 (token hardening) must precede M11 (Google Sign-In)**, which in turn must precede any real-user/client rollout. M6 must land before real clients authenticate on Google.

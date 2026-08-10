@@ -3,10 +3,21 @@ import type { Project } from "../types";
 import { HealthDot, overallHealth } from "./HealthDot";
 
 const STATUS_LABEL: Record<Project["status"], string> = {
+  draft: "Draft",
   planning: "Planning",
   active: "Active",
   on_hold: "On hold",
   completed: "Completed",
+  archived: "Archived",
+};
+
+const STATUS_TONE: Record<Project["status"], string> = {
+  draft: "border-blueprint-500/40 text-blueprint-300",
+  planning: "border-ink-border bg-ink text-paper-muted",
+  active: "border-status-green/40 text-status-green",
+  on_hold: "border-status-amber/40 text-status-amber",
+  completed: "border-blueprint-500/40 text-blueprint-300",
+  archived: "border-ink-border text-paper-faint",
 };
 
 function formatCurrency(value: number) {
@@ -17,17 +28,7 @@ function formatCurrency(value: number) {
   }).format(value);
 }
 
-function sheetNumber(index: number) {
-  return `P-${String(index + 1).padStart(2, "0")}`;
-}
-
-export function ProjectCard({
-  project,
-  index,
-}: {
-  project: Project;
-  index: number;
-}) {
+export function ProjectCard({ project }: { project: Project }) {
   const overall = overallHealth(
     project.timeline_health,
     project.budget_health,
@@ -54,7 +55,7 @@ export function ProjectCard({
       <div className="mb-3 flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="font-mono text-[11px] tracking-wider text-blueprint-400">
-            {sheetNumber(index)}
+            {project.project_code}
           </p>
           <h3 className="truncate text-sm font-semibold text-paper">
             {project.name}
@@ -63,7 +64,9 @@ export function ProjectCard({
             {project.client_name}
           </p>
         </div>
-        <span className="shrink-0 rounded border border-ink-border bg-ink px-2 py-0.5 text-[10px] uppercase tracking-wide text-paper-muted">
+        <span
+          className={`shrink-0 rounded border px-2 py-0.5 text-[10px] uppercase tracking-wide ${STATUS_TONE[project.status]}`}
+        >
           {STATUS_LABEL[project.status]}
         </span>
       </div>

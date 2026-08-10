@@ -7,7 +7,13 @@ export type UserRole =
   | "procurement_manager"
   | "client";
 
-export type ProjectStatus = "planning" | "active" | "on_hold" | "completed";
+export type ProjectStatus =
+  | "draft"
+  | "active"
+  | "planning"
+  | "on_hold"
+  | "completed"
+  | "archived";
 
 export type HealthStatus = "green" | "amber" | "red";
 
@@ -24,6 +30,7 @@ export interface User {
 export interface Project {
   id: string;
   name: string;
+  project_code: string;
   site_address: string;
   client_name: string;
   start_date: string;
@@ -35,8 +42,24 @@ export interface Project {
   safety_health: HealthStatus;
   budget_spent: number;
   percent_complete: number;
+  created_by: string | null;
+  completed_at: string | null;
+  completed_by: string | null;
+  archived_at: string | null;
+  archived_by: string | null;
+  restored_at: string | null;
+  restored_by: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ProjectCreateInput {
+  name: string;
+  site_address: string;
+  client_name: string;
+  start_date: string;
+  target_end_date: string;
+  budget_total: number;
 }
 
 export interface TokenResponse {

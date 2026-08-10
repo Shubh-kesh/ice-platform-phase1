@@ -1,8 +1,8 @@
 # Current State of the Software
 
 **Document:** Actual implementation state of the ICE platform today
-**Date:** August 10, 2026
-**Basis:** Source-code inspection + verified runs (54 backend tests pass, live DB inspected)
+**Date:** August 11, 2026
+**Basis:** Source-code inspection + verified runs (69 backend tests pass, live DB inspected)
 **Warning:** This document describes what EXISTS today, not the product vision. The roadmap is in `docs/PRODUCT_REQUIREMENTS.md`; the current reality is here.
 
 ---
@@ -38,14 +38,15 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 |---|---|---|---|
 | Authentication | `api/v1/auth.py`, `core/security.py`, `core/rate_limit.py` | `lib/auth-context.tsx`, `lib/api.ts`, `pages/Login.tsx` | JWT access (30m) + refresh (7d); bcrypt; login rate-limited 5/min |
 | Users (admin CRUD) | `api/v1/users.py` | — | Admin-only; password policy 8 chars + 1 uppercase + 1 digit |
-| Projects + health | `api/v1/projects.py`, `models/project.py` | `CommandCenter.tsx`, `ProjectCard.tsx`, `KpiStrip.tsx`, `HealthDot.tsx`, `ProjectDetail.tsx`, `ProjectAssignments.tsx` | 3 color-coded health fields, manual; admin-assignable team panel (Phase 3 M2) |
+| Projects + health | `api/v1/projects.py`, `models/project.py`, `services/projects.py` | `CommandCenter.tsx`, `ProjectCard.tsx`, `KpiStrip.tsx`, `HealthDot.tsx`, `ProjectDetail.tsx`, `ProjectAssignments.tsx` | 3 color-coded health fields, manual; admin-assignable team panel (Phase 3 M2); project lifecycle state machine (Phase 3 M10) |
 | Audit trail | `models/audit.py`, `middleware/audit.py`, `api/v1/audit.py` | — | Admin read endpoint only |
 | Tasks / Gantt bars | `models/task.py`, `api/v1/tasks.py` | `ProjectTimeline.tsx` | Flat task list per project |
 | Daily site logs | `models/site_log.py`, `api/v1/site_logs.py` | `DailySiteLogs.tsx` | Append-only create/read |
 | Inventory ledger | `models/inventory.py`, `api/v1/inventory.py`, `services/inventory.py` | `InventoryPanel.tsx` | Items + row-locked signed stock-movement ledger; reconciliation report (`GET /projects/{id}/inventory/reconciliation`) |
 | Finance (job costing) | `models/finance.py`, `api/v1/finance.py`, `services/finance.py`, `schemas/finance.py` | `JobCostsPanel.tsx` | `cost_code` enum; job-cost CRUD; `budget_spent` derived from `SUM(job_costs)`; budget roll-up report (Phase 3 M4) |
 | Finance (invoices) | `models/finance.py` | — | Tables only, **no endpoints** (M5) |
-| Seed/demo data | `seed.py` | — | 4 role users + 15 projects |
+| Seed/demo data | `seed.py` | — | 4 role users + 15 demo projects, gated behind `ICE_SEED_DEMO` (off in prod) |
+| Project lifecycle | `models/project.py`, `api/v1/projects.py`, `services/projects.py`, migration `d7e9f1a2b3c4` | `CommandCenter.tsx`, `ProjectCard.tsx`, `ProjectDetail.tsx` | DRAFT→ACTIVE→COMPLETED→ARCHIVED state machine; archive/restore; auto `PRJ-YYYY-####` codes; `get_project_or_404` (Phase 3 M10) |
 
 ## 3. Phase 1 completed functionality
 
@@ -77,6 +78,13 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 
 - **Finance (P3 M4):** Job-costing landed — `cost_code` enum (`foundation`…`other`), `GET/POST /projects/{id}/job-costs` + `PATCH/DELETE .../{cost_id}` (admin/procurement read **and** write — cost line items are budget data and are 403 for clients/supervisors), and `GET /projects/{id}/budget` (admin/proc roll-up: total / spent / remaining / by-cost-code). `Project.budget_spent` is now **derived** from `SUM(job_costs.amount)` in the same transaction as every mutation (denormalized running total, like `quantity_on_hand`), and job-cost mutations lock the project row (`SELECT ... FOR UPDATE`, the M1 inventory pattern) so concurrent writes can't drift the total from the ledger — the acceptance invariant `budget_spent == SUM(job_costs)` holds. Finance service follows the Phase 3 thin-services pattern (`app/services/finance.py`, pure domain math). Invoices remain schema-only (M5).
 - **Testing (P3 M4):** `tests/test_finance.py` — 12 tests covering create/update/delete budget recompute, roll-up split, supervisor write-403, client+supervisor read-403, client budget-403, amount validation, 404s, and a concurrent-WRITE row-lock regression test (no lost budget update).
+- **Project Lifecycle & Admin (P3 M10):** status becomes a real state machine (`draft|planning|active|on_hold|completed|archived`). `POST /projects` (admin) auto-generates a unique `PRJ-YYYY-####` `project_code` and creates the project as **DRAFT**. Admin-only transition endpoints (`POST /projects/{id}/activate|complete|archive|restore`) validate the legal transition from the project's current status (400 otherwise), set lifecycle timestamps + actor ids, and audit (activate/complete/archive/restore actions) atomically with the change:
+  - `activate` (DRAFT/PLANNING/ON_HOLD→ACTIVE), `complete` (ACTIVE→COMPLETED, sets `percent_complete=100` + `completed_at/by`), `archive` (ACTIVE|COMPLETED→ARCHIVED, sets `archived_at/by`; rejects DRAFT/PLANNING/ON_HOLD), `restore` (ARCHIVED→ACTIVE, or →COMPLETED when it was completed before archiving; sets `restored_at/by`).
+  - `ProjectUpdate` no longer accepts `status` (and `budget_spent` is derived from `job_costs`, never client-settable) — status changes only through the transition endpoints.
+- **Archive visibility (P3 M10, hardened):** `get_project_or_404` and `list_projects` exclude ARCHIVED from non-admin results — admin/procurement see archived (listing requires `?include=archived`), supervisors/clients get **404** (archived, not 403, so archived projects can't be probed/leaked). Archived projects are read-only for **every** writer: the lifecycle transition endpoints are the deliberate exception, and every other write path (project PATCH, assignment grant/revoke, tasks, site logs, inventory items/movements, job costs) rejects writes to an ARCHIVED project via the shared `assert_project_writable()` guard in `app/api/project_access.py` (403 for admin/procurement after visibility is resolved; supervisors/clients still get 404). The UI renders the detail page read-only until restored.
+- **Transition/archive concurrency (P3 M10, hardened):** `_transition` and `restore` now load the project with a PostgreSQL row lock (`SELECT ... FOR UPDATE`, the existing M1/M4 pattern) held to commit, so concurrent transitions serialize: only one lifecycle decision is made against a given state and the audit chain can't contradict itself. `create_project` now regenerates the `project_code` and retries (up to 5 attempts) when the DB unique constraint fires on a concurrent max()+1 collision, returning a clean 409 instead of an avoidable 500.
+- **Seed gating (P3 M10):** `seed.py` demo users/projects only load when `ICE_SEED_DEMO=true` (dev/local), keeping prod empty.
+- **Testing (P3 M10):** `tests/test_project_lifecycle.py` — 12 tests covering the full DRAFT→ACTIVE→COMPLETED→ARCHIVED→restore chain, admin-only enforcement (403 for supervisor/procurement/client on all four transitions), invalid transitions rejected 400 (`activate` on non-DRAFT, default-DRAFT `transition`, archive of PLANNING/ON_HOLD), archive filtering (`?include=archived`, default excludes), archived 404-for-non-admin while sibling assigned projects stay visible, audit events recorded per transition with correct changes/actor, `project_code` auto-generation + `PRJ-2026-####` uniqueness/seq-collision retry, and descendants (tasks/site logs/inventory/job-costs) surviving archive/restore round-trip with `budget_spent` invariant intact.
 
 ## 5. Partially implemented functionality
 
@@ -95,7 +103,8 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 - **Task dependency cycles allowed:** `depends_on_id` can be set to form a self-reference or cycle; not checked on create or update.
 - **Duplicate-ish data allowed — partially RESOLVED:** duplicate `project_assignments` rows are now impossible (unique constraint + API returns 409, Phase 3 M2); duplicate inventory item names per project, and multiple daily site logs per day, still have no uniqueness constraints.
 - **`uuid.UUID(user_id)` can raise `ValueError` -> 500** in `deps.py:45` and `auth.py:55` when a token carries a non-UUID subject (low exploitability, tokens are signed).
-- **Backend lint/type failures:** `ruff check app` reports 5 unused-import (F401) errors; `mypy app` reports 10 errors (broken `Mapped["Project"]` forward references in 4 model files, config args).
+- **Concurrent lifecycle transitions can race — RESOLVED (Phase 3 M10 hardening):** `activate`/`complete`/`archive`/`restore` now take a `SELECT ... FOR UPDATE` row lock on the project (via `get_project_for_update`) in the same transaction as the transition, so two simultaneous transitions serialize on the project row and only one passes the status guard per committed state.
+- **Backend lint/type failures:** `ruff check app tests` reports 4 unused-import (F401) errors (all pre-existing files); `mypy app` reports 12 errors (broken `Mapped["Project"]` forward references in 4 model files, config args, jose/passlib stubs).
 - **`ip_address` on audit entries is always NULL** — the parameter exists but is never passed.
 
 ## 7. Technical debt
@@ -134,10 +143,10 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 
 ## 10. Testing status
 
-- **Backend tests: 54, all passing** against real Postgres (verified on Aug 10, 2026). Files: test_auth (9), test_users (8), test_tasks (7), test_site_logs (4), test_inventory (9 — incl. row-lock concurrency, ledger-reconciliation match/mismatch, reconciliation RBAC), test_projects (8 — assignment API admin/RBAC/duplicate/isolation), test_finance (9 — job-cost CRUD, budget recompute, roll-up split, RBAC, validation; Phase 3 M4).
+- **Backend tests: 69, all passing** against real Postgres (verified on Aug 11, 2026). Files: test_auth (9), test_users (8), test_tasks (7), test_site_logs (4), test_inventory (9 — incl. row-lock concurrency, ledger-reconciliation match/mismatch, reconciliation RBAC), test_projects (8 — assignment API admin/RBAC/duplicate/isolation), test_finance (12 — job-cost CRUD, budget recompute, roll-up split, RBAC, validation, concurrent-WRITE row lock; Phase 3 M4), test_project_lifecycle (12 — lifecycle transitions, admin-only, invalid transitions, archive filtering + 404 non-admin visibility, audit, codegen uniqueness/collision, archive/restore descendant + budget invariant; Phase 3 M10).
 - **Coverage: ~73%** overall (pytest-cov). Lowest areas: inventory `api/v1/inventory.py` 39%, `projects.py` 42%, `tasks.py` 42%.
 - **Frontend tests: none** (no vitest/RTL config or tests).
-- **Missing critical tests:** `test_projects.py` handles the assignment API but project CRUD, PATCH RBAC, health updates, and budget validation remain untested; audit endpoint (`/audit/logs`) untested; client read-isolation untested (row-lock concurrency and ledger-reconciliation now covered in Phase 3 M1); no migration-drift test; invoice (M5) and health (M3) not yet written.
+- **Missing critical tests:** project CRUD/PATCH RBAC/health-update/budget-validation edge cases beyond the lifecycle suite; client read-isolation (archived-404 is covered; assigned-client non-archived read is not); audit endpoint (`/audit/logs`) untested; no migration-drift test; invoice (M5), health (M3), lifecycle concurrency race, and Google auth (M11) not yet written.
 - **Tooling:** pytest + pytest-asyncio + httpx; tests use a disposable `ice_test_db` Postgres database created/dropped per test. Ruff and mypy available in dev deps but **not CI-gated**.
 
 ## 11. Production readiness
@@ -156,6 +165,8 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 ## 13. Known limitations
 
 - **No project-assignment management API — RESOLVED (Phase 3 M2):** admins now assign/unassign supervisors and clients per project via `GET/POST/DELETE /projects/{id}/assignments` (admin-only, audited, unique-constrained). Users can be onboarded to sites through the system, making per-project RBAC operational rather than demo-only.
+- **Project Lifecycle & Admin — IMPLEMENTED (Phase 3 M10):** `project_code` auto-generation (`PRJ-YYYY-####`), the DRAFT→ACTIVE→COMPLETED→ARCHIVED lifecycle with `restore`, lifecycle actor/timestamps + auditing, archive visibility (non-admins get 404 on archived projects), demo-seed gating (`ICE_SEED_DEMO`), read-only enforcement for ARCHIVED across every write path, row-locked transitions/restore, and retry-on-collision project-code generation are all in (§4b). No DELETE endpoint exists for any state (by design — nothing is hard-deletable, soft-lifecycle only).
+- **Google Sign-In — PLANNED (Phase 3 M11):** only email/password auth exists; no OAuth2/OIDC provider, no `google_sub`/account linking, no admin invitation without a preset password (user creation requires a password today), no server-side session/revocation infrastructure (see Security concerns), and no audit of auth events. Google will authenticate **only** — ICE retains identity, role, assignments, and permissions.
 - **Finance**: job-costing is implemented (P3 M4, see §4b); **invoice CRUD, milestone-based invoicing, and accounting sync** are not (blocked on a provider/OAuth decision, per repo notes). Invoices remain schema-only.
 - **No file uploads or voice capture** in daily site logs.
 - **No offline-first / mobile-first experience:** it is a desktop web SPA; sidebar does not collapse; no PWA/service worker.

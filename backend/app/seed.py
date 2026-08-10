@@ -5,11 +5,18 @@ Creates one user per role and 15 realistic residential projects with a mix
 of health statuses so the Command Center dashboard has something real to
 show. Safe to re-run — skips anything that already exists by email/name.
 
+DEMO-GATED (Phase 3 M10): this script intentionally refuses to run unless
+explicitly enabled, so demo data never becomes the permanent source of
+projects in a real deployment. Enable with:
+
+    ICE_SEED_DEMO=true python -m app.seed
+
 Usage:
-    python -m app.seed
+    ICE_SEED_DEMO=true python -m app.seed
     (or, via Docker: docker compose exec backend python -m app.seed)
 """
 import asyncio
+import os
 import random
 from datetime import date, timedelta
 
@@ -85,6 +92,16 @@ def random_health() -> HealthStatus:
 
 
 async def seed():
+    # Demo gating — seed must be explicitly enabled (M10). Prevents the demo
+    # dataset from being the implicit permanent project source.
+    if os.getenv("ICE_SEED_DEMO", "false").lower() not in ("1", "true", "yes"):
+        print(
+            "Demo seed skipped: set ICE_SEED_DEMO=true (or pass --demo) to load "
+            "demo users and projects. Demo data is intended for development "
+            "use only and must not be the permanent project source."
+        )
+        return
+
     async with AsyncSessionLocal() as db:
         # --- Users ---
         created_users: dict[UserRole, User] = {}
@@ -118,7 +135,13 @@ async def seed():
             supervisor = created_users[UserRole.SITE_SUPERVISOR]
             client_user = created_users[UserRole.CLIENT]
 
-            for i in range(15):
+            # Distinct project codes so the demo set does not collide with
+            # any admin-created projects (unique project_code, M10).
+            year = str(date.today().year)
+            max_seq = await _max_demo_seq(db, year)
+            total = min(15, 15 - existing_count)
+
+            for i in range(total):
                 city, locality = CITIES[i]
                 client_name = CLIENT_NAMES[i]
                 budget_total = random.choice([3500000, 4800000, 6200000, 8500000, 12000000])
@@ -135,6 +158,7 @@ async def seed():
                 target_end = start + timedelta(days=random.randint(180, 540))
 
                 project = Project(
+                    project_code=f"PRJ-{year}-{max_seq + i + 1:04d}",
                     name=f"{client_name.split()[-1]} Residence, {city.split(',')[0]}",
                     site_address=f"{locality}, {city}",
                     client_name=client_name,
@@ -159,11 +183,25 @@ async def seed():
                     db.add(ProjectAssignment(project_id=project.id, user_id=client_user.id))
 
             await db.commit()
-            print("Seeded 15 demo projects.")
+            print(f"Seeded {total} demo projects.")
 
         print("\nDemo login credentials (all use password: {}):".format(DEMO_PASSWORD))
         for u in DEMO_USERS:
             print(f"  {u['role'].value:<22} {u['email']}")
+
+
+async def _max_demo_seq(db, year: str) -> int:
+    """Highest PRJ-YYYY-#### sequence currently present (for unique codes)."""
+    result = await db.execute(
+        select(Project.project_code)
+        .where(Project.project_code.like(f"PRJ-{year}-%"))
+        .order_by(Project.project_code.desc())
+        .limit(1)
+    )
+    last = result.scalar_one_or_none()
+    if last is None:
+        return 0
+    return int(last.rsplit("-", 1)[1])
 
 
 if __name__ == "__main__":
