@@ -8,6 +8,7 @@ import { HealthDot } from "../components/HealthDot";
 import { ProjectTimeline } from "../components/ProjectTimeline";
 import { DailySiteLogs } from "../components/DailySiteLogs";
 import { InventoryPanel } from "../components/InventoryPanel";
+import { JobCostsPanel } from "../components/JobCostsPanel";
 import { ProjectAssignments } from "../components/ProjectAssignments";
 import { useAuth } from "../lib/auth-context";
 
@@ -37,6 +38,7 @@ export function ProjectDetail() {
   // would 403 anyway.
   const canWriteTimeline = user?.role === "admin" || user?.role === "site_supervisor";
   const canWriteInventory = user?.role === "admin" || user?.role === "procurement_manager";
+  const canWriteFinance = user?.role === "admin" || user?.role === "procurement_manager";
   const isAdmin = user?.role === "admin";
 
   const { data: project, isLoading } = useQuery({
@@ -130,6 +132,7 @@ export function ProjectDetail() {
             />
             <DailySiteLogs projectId={project.id} canWrite={canWriteTimeline} />
             <InventoryPanel projectId={project.id} canWrite={canWriteInventory} />
+            {canWriteFinance && <JobCostsPanel projectId={project.id} canWrite={canWriteFinance} />}
             {isAdmin && <ProjectAssignments projectId={project.id} />}
           </div>
         </div>

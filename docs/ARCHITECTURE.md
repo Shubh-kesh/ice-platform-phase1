@@ -121,6 +121,7 @@ flowchart TB
             TSK["tasks.py"]
             LOGS["site_logs.py"]
             INV["inventory.py"]
+            FIN["finance.py (M4: job costs + budget)"]
             AUD["audit.py"]
         end
     end
@@ -136,7 +137,7 @@ flowchart TB
         M_TASK["task.py"]
         M_LOG["site_log.py"]
         M_INV["inventory.py"]
-        M_FIN["finance.py (unused)"]
+        M_FIN["finance.py (job costs used; invoices scaffold)"]
         M_AUD["audit.py"]
     end
     SCH["app/schemas/ (Pydantic)"]
@@ -154,7 +155,7 @@ flowchart TB
     ORM --> DB
 ```
 
-**Layering note:** routes depend directly on models/schemas/core. There is **no full `services/` or `repositories/` layer** — most handlers perform validation, authorization, business logic, persistence, and audit inline. Schemas are the request/response contracts; models are the persistence layer. A thin `app/services/inventory.py` (introduced Phase 3 M1) now holds the ledger-integrity logic; further Phase 3 domain logic (finance, health) is expected to follow the same pattern.
+**Layering note:** routes depend directly on models/schemas/core. There is **no full `services/` or `repositories/` layer** — most handlers perform validation, authorization, business logic, persistence, and audit inline. Schemas are the request/response contracts; models are the persistence layer. Thin `app/services/inventory.py` (Phase 3 M1, ledger integrity) and `app/services/finance.py` (Phase 3 M4, budget roll-up) hold the domain math; further Phase 3 domain logic (health) is expected to follow the same pattern.
 
 ### Request lifecycle
 
@@ -203,7 +204,7 @@ erDiagram
     projects ||--o{ inventory_items : "tracks"
     inventory_items ||--o{ stock_movements : "ledger"
     users }o--o{ stock_movements : "recorded_by"
-    projects ||--o{ job_costs : "scaffold (no API)"
+    projects ||--o{ job_costs : "costs (ledger -> budget_spent)"
     projects ||--o{ invoices : "scaffold (no API)"
     users ||--o{ audit_logs : "actor"
 
@@ -257,6 +258,14 @@ erDiagram
         numeric quantity
         string note
     }
+    job_costs {
+        uuid id PK
+        uuid project_id FK
+        enum cost_code
+        string description
+        numeric amount
+        date incurred_on
+    }
     audit_logs {
         uuid id PK
         uuid user_id FK
@@ -270,6 +279,8 @@ erDiagram
 
 ### Key design points
 - **Inventory is ledger + running total:** `quantity_on_hand` on `inventory_items` is denormalized; every change appends an immutable `stock_movements` row (received/adjusted = +, consumed/transferred = −). The ledger is the audit-grade source of truth.
+- **Budget is ledger + running total (Phase 3 M4):** `Project.budget_spent` is denormalized and recomputed from `SUM(job_costs.amount)` in the same transaction as every cost mutation; `GET /projects/{id}/budget` re-derives the roll-up from the ledger on read. Project rows are locked (`SELECT ... FOR UPDATE`) on cost mutations — like M1's inventory row-lock — so concurrent writes serialize and `budget_spent` can't drift from the ledger.
+- **Finance data is admin/proc only (Phase 3 M4):** job-cost ledger and budget roll-up reads are restricted to admin/procurement; clients/supervisors get 403 (never leak `budget_*` to client).
 - **Append-only records:** `audit_logs` and `daily_site_logs` are written but never updated/deleted via any endpoint.
 - **Money:** `Numeric(14,2)` on budgets/costs; `Numeric(12,2)` on quantities.
 - **Constraints:** unique email (indexed); FK indexes on project-scoped tables; native Postgres enums; **no `CHECK` constraints at the DB level** (e.g., `percent_complete` 0-100 is enforced only by Pydantic).
@@ -322,6 +333,7 @@ flowchart TB
 | Tasks | all (scoped) | admin / assigned supervisor |
 | Site logs | all (scoped) | admin / assigned supervisor (create only) |
 | Inventory | all (scoped) | admin / procurement |
+| Finance (job costs) | admin / procurement | admin / procurement |
 | Audit | admin | — (write via system only) |
 
 **Current limitation (RESOLVED, Phase 3 M2):** `project_assignments` used to be seed-only. An admin-only API (`GET/POST/DELETE /projects/{id}/assignments`, audited, unique-constrained on `(project_id, user_id)`) now assigns/unassigns supervisors and clients, with effects within one request.
@@ -355,6 +367,10 @@ flowchart TB
 | GET | `/api/v1/projects/{id}/inventory/reconciliation` | admin / proc | ledger-vs-on-hand integrity report |
 | GET/POST | `/api/v1/projects/{id}/assignments` | admin | list / assign users to a project |
 | DELETE | `/api/v1/projects/{id}/assignments/{user_id}` | admin | revoke a user's project access |
+| GET | `/api/v1/projects/{id}/job-costs` | admin / procurement | job-cost ledger (Phase 3 M4) |
+| POST | `/api/v1/projects/{id}/job-costs` | admin / procurement | record a job cost (recomputes budget_spent) |
+| PATCH/DELETE | `/api/v1/projects/{id}/job-costs/{cost_id}` | admin / procurement | correct/remove a cost (recomputes budget_spent) |
+| GET | `/api/v1/projects/{id}/budget` | admin / procurement | computed budget roll-up (total/spent/remaining/by cost code) |
 | GET | `/api/v1/audit/logs` | admin | list audit trail (filter/paginate) |
 | GET | `/health` | public | liveness (LB/CI) |
 

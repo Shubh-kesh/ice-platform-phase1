@@ -1,8 +1,8 @@
 # Current State of the Software
 
 **Document:** Actual implementation state of the ICE platform today
-**Date:** August 9, 2026
-**Basis:** Source-code inspection + verified runs (33 backend tests pass, coverage 73%, live DB inspected)
+**Date:** August 10, 2026
+**Basis:** Source-code inspection + verified runs (54 backend tests pass, live DB inspected)
 **Warning:** This document describes what EXISTS today, not the product vision. The roadmap is in `docs/PRODUCT_REQUIREMENTS.md`; the current reality is here.
 
 ---
@@ -43,7 +43,8 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 | Tasks / Gantt bars | `models/task.py`, `api/v1/tasks.py` | `ProjectTimeline.tsx` | Flat task list per project |
 | Daily site logs | `models/site_log.py`, `api/v1/site_logs.py` | `DailySiteLogs.tsx` | Append-only create/read |
 | Inventory ledger | `models/inventory.py`, `api/v1/inventory.py`, `services/inventory.py` | `InventoryPanel.tsx` | Items + row-locked signed stock-movement ledger; reconciliation report (`GET /projects/{id}/inventory/reconciliation`) |
-| Finance schema | `models/finance.py` | — | Tables only, **no endpoints** |
+| Finance (job costing) | `models/finance.py`, `api/v1/finance.py`, `services/finance.py`, `schemas/finance.py` | `JobCostsPanel.tsx` | `cost_code` enum; job-cost CRUD; `budget_spent` derived from `SUM(job_costs)`; budget roll-up report (Phase 3 M4) |
+| Finance (invoices) | `models/finance.py` | — | Tables only, **no endpoints** (M5) |
 | Seed/demo data | `seed.py` | — | 4 role users + 15 projects |
 
 ## 3. Phase 1 completed functionality
@@ -72,6 +73,11 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 - **Shared helpers:** `project_access.py` extracted and used by all project-scoped routes.
 - **Tests:** task, site-log, and inventory suites (33 total backend tests, all pass against real Postgres).
 
+## 4b. Phase 3 completed functionality
+
+- **Finance (P3 M4):** Job-costing landed — `cost_code` enum (`foundation`…`other`), `GET/POST /projects/{id}/job-costs` + `PATCH/DELETE .../{cost_id}` (admin/procurement read **and** write — cost line items are budget data and are 403 for clients/supervisors), and `GET /projects/{id}/budget` (admin/proc roll-up: total / spent / remaining / by-cost-code). `Project.budget_spent` is now **derived** from `SUM(job_costs.amount)` in the same transaction as every mutation (denormalized running total, like `quantity_on_hand`), and job-cost mutations lock the project row (`SELECT ... FOR UPDATE`, the M1 inventory pattern) so concurrent writes can't drift the total from the ledger — the acceptance invariant `budget_spent == SUM(job_costs)` holds. Finance service follows the Phase 3 thin-services pattern (`app/services/finance.py`, pure domain math). Invoices remain schema-only (M5).
+- **Testing (P3 M4):** `tests/test_finance.py` — 12 tests covering create/update/delete budget recompute, roll-up split, supervisor write-403, client+supervisor read-403, client budget-403, amount validation, 404s, and a concurrent-WRITE row-lock regression test (no lost budget update).
+
 ## 5. Partially implemented functionality
 
 - **Dynamic Gantt:** tasks and dependency column exist, but changing a task date does **not** shift downstream tasks, and there are **no vendor notifications**. The frontend never sends `depends_on_id`.
@@ -80,7 +86,7 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 - **Daily site logs:** text fields fully work; the mandatory "5 photos + voice-to-text" capture does not — `photo_urls` is always an empty list.
 - **Audit trail:** covers CRUD on users/projects/tasks/logs/inventory but not login/refresh events; `ip_address` is never populated.
 - **Client experience:** the Client role can log in and view assigned projects/tasks/logs, but sees full budget figures — this is not the PRD's view-only photo/invoice portal.
-- **Finance:** schema only (see Known limitations).
+- **Finance:** job-costing endpoints exist (P3 M4); invoice CRUD + milestone-based invoicing still not implemented (see Known limitations).
 
 ## 6. Known bugs
 
@@ -96,8 +102,8 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 
 - **No services/repositories layer:** route handlers mix dependency injection, authorization, validation, business logic, DB access, and audit in single functions.
 - **Duplicated audit-pattern code:** the "build changes dict from `model_dump(exclude_unset=True)`" pattern is copy-pasted in `users.py:79`, `projects.py:91`, `tasks.py:100`, `inventory.py:111`.
-- **Dead code / unused dependencies:** `redis` and `tenacity` in requirements (never used); `GCP_PROJECT_ID` / `GCS_BUCKET_NAME` config stubs; `finance.py` models imported but unreferenced; project idle health code is manual.
-- **Dangling abstraction:** `finance` models exist with no endpoints consuming them.
+- **Dead code / unused dependencies:** `redis` and `tenacity` in requirements (never used); `GCP_PROJECT_ID` / `GCS_BUCKET_NAME` config stubs; `Invoice` model + finance enum imports used only partially; project idle health code is manual.
+- **Dangling abstraction:** `invoices` models exist with no endpoints consuming them (M5).
 - **Inconsistent patterns:** `_get_item_or_404` vs `get_project_or_404`; per-module `write_roles`; inconsistent route shapes (`/audit/logs` vs flat collections).
 - **Lint/type debt is un-gated** (no CI).
 - **Stale root documentation:** `QUICK_START.md`, `PHASE2_READY.md`, `IMPLEMENTATION_SUMMARY.txt`, `CRITICAL_FIXES_IMPLEMENTED.md` contradict the code (e.g., claim SQLite in-memory tests; code uses real Postgres; "15+ tests" vs 33) and overstate readiness.
@@ -128,10 +134,10 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 
 ## 10. Testing status
 
-- **Backend tests: 45, all passing** against real Postgres (verified on Aug 9, 2026). Files: test_auth (9), test_users (8), test_tasks (7), test_site_logs (4), test_inventory (9 — incl. row-lock concurrency, ledger-reconciliation match/mismatch, reconciliation RBAC), test_projects (8 — assignment API admin/RBAC/duplicate/isolation).
-- **Coverage: 73%** overall (pytest-cov). Lowest areas: inventory `api/v1/inventory.py` 39%, `projects.py` 42%, `tasks.py` 42%.
+- **Backend tests: 54, all passing** against real Postgres (verified on Aug 10, 2026). Files: test_auth (9), test_users (8), test_tasks (7), test_site_logs (4), test_inventory (9 — incl. row-lock concurrency, ledger-reconciliation match/mismatch, reconciliation RBAC), test_projects (8 — assignment API admin/RBAC/duplicate/isolation), test_finance (9 — job-cost CRUD, budget recompute, roll-up split, RBAC, validation; Phase 3 M4).
+- **Coverage: ~73%** overall (pytest-cov). Lowest areas: inventory `api/v1/inventory.py` 39%, `projects.py` 42%, `tasks.py` 42%.
 - **Frontend tests: none** (no vitest/RTL config or tests).
-- **Missing critical tests:** `test_projects.py` now exists (assignment API, Phase 3 M2) but project CRUD, PATCH RBAC, health updates, and budget validation remain untested; audit endpoint (`/audit/logs`) untested; inventory client read-isolation untested (row-lock concurrency and ledger-reconciliation now covered in Phase 3 M1); no migration-drift test; no finance tests.
+- **Missing critical tests:** `test_projects.py` handles the assignment API but project CRUD, PATCH RBAC, health updates, and budget validation remain untested; audit endpoint (`/audit/logs`) untested; client read-isolation untested (row-lock concurrency and ledger-reconciliation now covered in Phase 3 M1); no migration-drift test; invoice (M5) and health (M3) not yet written.
 - **Tooling:** pytest + pytest-asyncio + httpx; tests use a disposable `ice_test_db` Postgres database created/dropped per test. Ruff and mypy available in dev deps but **not CI-gated**.
 
 ## 11. Production readiness
@@ -150,7 +156,7 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 ## 13. Known limitations
 
 - **No project-assignment management API — RESOLVED (Phase 3 M2):** admins now assign/unassign supervisors and clients per project via `GET/POST/DELETE /projects/{id}/assignments` (admin-only, audited, unique-constrained). Users can be onboarded to sites through the system, making per-project RBAC operational rather than demo-only.
-- **Finance** is schema-only: no cost-code dimension, no job-cost/invoice CRUD, no milestone invoicing, no accounting sync (blocked on a provider/OAuth decision, per repo notes).
+- **Finance**: job-costing is implemented (P3 M4, see §4b); **invoice CRUD, milestone-based invoicing, and accounting sync** are not (blocked on a provider/OAuth decision, per repo notes). Invoices remain schema-only.
 - **No file uploads or voice capture** in daily site logs.
 - **No offline-first / mobile-first experience:** it is a desktop web SPA; sidebar does not collapse; no PWA/service worker.
 - **No notifications** (vendor, low-stock, milestone) — nothing emails/SMS/pushes.

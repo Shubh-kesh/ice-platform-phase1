@@ -152,3 +152,45 @@ export interface StockMovementCreateInput {
   quantity: number;
   note?: string | null;
 }
+
+// --- Phase 3 M4: Job costing ---
+
+export type CostCode =
+  | "foundation"
+  | "structure"
+  | "masonry"
+  | "roofing"
+  | "electrical"
+  | "plumbing"
+  | "hvac"
+  | "finishing"
+  | "landscaping"
+  | "labor"
+  | "material"
+  | "equipment"
+  | "other";
+
+export interface JobCost {
+  id: string;
+  project_id: string;
+  cost_code: CostCode;
+  description: string;
+  amount: number;
+  incurred_on: string;
+  created_at: string;
+}
+
+export interface JobCostCreateInput {
+  cost_code: CostCode;
+  description: string;
+  amount: number;
+  incurred_on: string;
+}
+
+export interface BudgetRollup {
+  project_id: string;
+  budget_total: number;
+  budget_spent: number;
+  budget_remaining: number;
+  by_cost_code: Partial<Record<CostCode, number>>;
+}

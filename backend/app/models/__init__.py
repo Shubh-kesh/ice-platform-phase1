@@ -4,7 +4,7 @@ from app.models.audit import AuditLog
 from app.models.task import Task, TaskStatus
 from app.models.site_log import DailySiteLog
 from app.models.inventory import InventoryItem, StockMovement, MovementType
-from app.models.finance import JobCost, Invoice, InvoiceStatus, ExternalSyncStatus
+from app.models.finance import JobCost, Invoice, InvoiceStatus, ExternalSyncStatus, CostCode
 
 __all__ = [
     "User",
@@ -24,4 +24,5 @@ __all__ = [
     "Invoice",
     "InvoiceStatus",
     "ExternalSyncStatus",
+    "CostCode",
 ]

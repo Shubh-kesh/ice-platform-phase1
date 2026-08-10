@@ -35,8 +35,36 @@ class ExternalSyncStatus(str, enum.Enum):
     SYNC_FAILED = "sync_failed"
 
 
+class CostCode(str, enum.Enum):
+    """Standard construction cost-code dimension for job-cost roll-ups.
+
+    Trade/site-of-spend level (PRD example: "Masonry", "Plumbing"), plus a few
+    general buckets (labor / material / equipment / other) so every expense
+    can always be tagged. Extend here + with a migration when new codes are
+    needed — the enum name is shared across the DB type and API schema.
+    """
+    FOUNDATION = "foundation"
+    STRUCTURE = "structure"
+    MASONRY = "masonry"
+    ROOFING = "roofing"
+    ELECTRICAL = "electrical"
+    PLUMBING = "plumbing"
+    HVAC = "hvac"
+    FINISHING = "finishing"
+    LANDSCAPING = "landscaping"
+    LABOR = "labor"
+    MATERIAL = "material"
+    EQUIPMENT = "equipment"
+    OTHER = "other"
+
+
 class JobCost(Base):
-    """A single costed line item against a project (labor, material, etc.)."""
+    """A single costed line item against a project (labor, material, etc.).
+
+    amount is always positive; the project's budget_spent is derived from the
+    SUM of these rows (kept as a denormalized running total in the same
+    transaction, mirroring inventory's quantity_on_hand pattern).
+    """
     __tablename__ = "job_costs"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -45,7 +73,9 @@ class JobCost(Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
-    category: Mapped[str] = mapped_column(String(100), nullable=False)  # labor, material, equipment, other
+    cost_code: Mapped[CostCode] = mapped_column(
+        Enum(CostCode, name="cost_code"), nullable=False
+    )
     description: Mapped[str] = mapped_column(Text, nullable=False)
     amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
     incurred_on: Mapped[date] = mapped_column(Date, nullable=False)
