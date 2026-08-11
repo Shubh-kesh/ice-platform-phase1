@@ -31,12 +31,17 @@ ENV PATH="/venv/bin:$PATH" \
 WORKDIR /app
 COPY --chown=ice:ice . .
 
+# Make the startup script executable
+RUN chmod +x /app/entrypoint.sh
+
 USER ice
 
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
+
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Cloud Run injects $PORT; default to 8080 for local docker-compose use.
 # Gunicorn manages uvicorn workers — resilient to a single worker crashing.
