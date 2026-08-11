@@ -16,6 +16,8 @@ import { ProjectTimeline } from "../components/ProjectTimeline";
 import { DailySiteLogs } from "../components/DailySiteLogs";
 import { InventoryPanel } from "../components/InventoryPanel";
 import { JobCostsPanel } from "../components/JobCostsPanel";
+import { InvoicingPanel } from "../components/InvoicingPanel";
+import { ClientInvoicesPanel } from "../components/ClientInvoicesPanel";
 import { ProjectAssignments } from "../components/ProjectAssignments";
 import { useAuth } from "../lib/auth-context";
 
@@ -92,6 +94,7 @@ export function ProjectDetail() {
   const isAdmin = user?.role === "admin";
   const canViewFinance =
     user?.role === "admin" || user?.role === "procurement_manager";
+  const isClient = user?.role === "client";
   const isArchived = project?.status === "archived";
 
   // Mirrors backend RBAC: admin/supervisor manage the timeline & site
@@ -266,6 +269,14 @@ export function ProjectDetail() {
             <DailySiteLogs projectId={project.id} canWrite={canWriteTimeline} />
             <InventoryPanel projectId={project.id} canWrite={canWriteInventory} />
             {canWriteFinance && <JobCostsPanel projectId={project.id} canWrite={canWriteFinance} />}
+            {canViewFinance && (
+              <InvoicingPanel
+                projectId={project.id}
+                canWrite={canWriteFinance}
+                contractTotal={project.budget_total}
+              />
+            )}
+            {isClient && <ClientInvoicesPanel projectId={project.id} />}
             {isAdmin && <ProjectAssignments projectId={project.id} />}
           </div>
         </div>

@@ -30,10 +30,10 @@
 - **MUST:** Job Costing — create/list `JobCost` entries with a **cost-code enum** (masonry, plumbing, etc.); `Project.budget_spent` derived from job costs (+ manual adjustment only if unavoidable). *(DONE — M4)*
 - **MUST:** **Project Lifecycle & Admin (NEW — M10)** — admin-managed, database-driven projects replacing seed/demo data as the permanent source. DRAFT → ACTIVE → COMPLETED → ARCHIVED lifecycle with no hard-deletes; auto-generated unique project codes; lifecycle-change audit (who/when); archived hidden from normal lists, retained in reporting; seed/demo data gated behind a dev-only flag.
 - **MUST:** Project health computed from real signals (schedule vs. dates → timeline; job costs vs. budget → budget; site safety flags → safety) with manual-override permitted + audited. *(DONE — M3; ordered AFTER M10 so health only computes over ACTIVE projects; safety dimension is NOT_RATED until a structured safety/quality data model exists)*
-- **MUST:** Invoicing — `Invoice` CRUD; milestone → invoice generation rules (e.g., "Slab Completed → 20%"). *(M5 — ordered AFTER M10 so lifecycle gates invoicing on ACTIVE projects)*
+- **MUST:** Invoicing — `Invoice` CRUD; milestone → invoice generation rules (e.g., "Slab Completed → 20%"). *(DONE — M5; ordered AFTER M10 so lifecycle gates invoicing on ACTIVE projects)*
 - **SHOULD:** Client view-only access: invoices + progress, no budget figures (role-scoped response contract). *(M6 — must land before real clients use Google Sign-In)*
 - **SHOULD:** Task date-order validation on update + dependency cycle detection. *(M7)*
-- **SHOULD:** Idempotency keys on POSTs (movements, site logs, invoices). *(DONE — M8: backend infra + `Idempotency-Key` header on POST job-costs, inventory movements, site-logs and project creation; invoice POSTs are still M5-schema-only, nothing to protect yet — the shared dependency enables them in one line)*
+- **SHOULD:** Idempotency keys on POSTs (movements, site logs, invoices). *(DONE — M8: backend infra + `Idempotency-Key` header on POST job-costs, inventory movements, site-logs and project creation; `POST /projects/{id}/invoices` also protected since M5)*
 - **MUST:** Token security — refresh-token rotation + server-side revocation + optional httpOnly cookie. *(M9 — prerequisite for M11)*
 - **MUST:** **Google Sign-In (NEW — M11)** — Google as **authentication only**; ICE retains identity, roles, authorizations, project assignments, permissions. Google never grants ADMIN. Session handling inherits M9 rotation/revocation/deactivation cutoff. Plans land here while Phase 4 provides the deploy/observability rails before real users arrive.
 
@@ -48,7 +48,7 @@ Execution order (M1/M2/M4 shipped):
 3. **M4 — job costing** — DONE
 4. **M10 — Project Lifecycle & Admin** (NEW) — DONE. Foundation for everything that follows: DB-driven projects, lifecycle state machine + audit, archive visibility, seed gating. See `docs/CURRENT_STATE.md` §4b.
 5. **M3 — computed health** — DONE. Reads lifecycle-aware project set (skip non-ACTIVE); deterministic Timeline/Budget verdicts + audited admin-only override (see `docs/CURRENT_STATE.md` §4b).
-6. **M5 — invoicing** — lifecycle-gated (only ACTIVE generate; COMPLETED frozen; ARCHIVED hidden).
+6. **M5 — invoicing** — DONE. Billing milestones (schedule of values) → server-side invoice amounts, lifecycle-gated (only ACTIVE generate; COMPLETED frozen; ARCHIVED hidden), client read-only restricted shape. See `docs/CURRENT_STATE.md` §4b.
 7. **M6 — client view-only scope** — before real clients can authenticate.
 8. **M7 — task validation** — independent; flexible slot.
 9. **M8 — idempotency keys** — DONE. Server-side `Idempotency-Key` support on POST job-costs, inventory movements, site-logs and project creation: a retry replays the stored response (no double-mutation), a failed attempt frees the key, and concurrent same-key requests execute exactly once via a DB unique-index claim ledger. See `docs/CURRENT_STATE.md` §4b.
@@ -69,7 +69,7 @@ Ordering rationale:
 
 **Database changes**
 - `job_costs`: add `cost_code` (enum/string) column; index `(project_id, incurred_on)`. *(DONE — M4)*
-- `invoices`: add `milestone_definition`/`contract_mapping` reference; keep `external_*` columns. *(M5)*
+- `invoices`: add `milestone_definition`/`contract_mapping` reference; keep `external_*` columns. *(DONE — M5: `billing_milestone_id` reference + unique `invoice_number` + partial double-billing index; see CURRENT_STATE.md §4b)*
 - **(M10)** `projects`: add unique `project_code varchar` (auto-generated, e.g. `PRJ-YYYY-####`), lifecycle columns `created_by`, `status` extension to DRAFT/ARCHIVED (keep existing enum values + add), `completed_at`/`completed_by`, `archived_at`/`archived_by`, `restored_at`/`restored_by`. No hard deletes — a soft lifecycle, never `DELETE`.
 - **(M10)** Add `is_demo`/seed marking OR a `seed_source` column so demo rows are identifiable and gagable; add `demo` flag to `seed.py` own runs (dev-only, env-gated).
 - **(M11)** `users`: add nullable `google_sub` (unique index) + `google_email` (read-only sync) + `password_hash_nullable` migration so Google-linked users can exist without a local password; keep `hashed_password` for retained username/password path.
@@ -84,14 +84,14 @@ Ordering rationale:
 - *(M10)* `GET /projects/{id}` and reporting endpoints remain readable for COMPLETED; archived requires `?include=archived` + admin.
 - `POST/DELETE /api/v1/projects/{id}/assignments` (admin) — or `PATCH /api/v1/users/{id}/assignments`. *(DONE — M2)*
 - `GET/POST /api/v1/projects/{id}/job-costs`, `GET /api/v1/projects/{id}/budget` (computed roll-up). *(DONE — M4)*
-- `GET/POST/PATCH /api/v1/projects/{id}/invoices`. *(M5)*
+- `GET/POST /api/v1/projects/{id}/billing-milestones`, `PATCH /projects/{id}/billing-milestones/{id}`, `POST /projects/{id}/billing-milestones/{id}/complete`, `GET/POST /projects/{id}/invoices`, `POST /projects/{id}/invoices/{id}/issue|mark-paid|cancel`. *(DONE — M5; admin owns, procurement view-only, clients read restricted shape)*
 - Health fields: computed + override endpoint (`PATCH /api/v1/projects/{id}/health-override`). *(DONE — M3: `GET/POST/DELETE /projects/{id}/health-overrides` + `GET /projects/health` roll-up, both admin-only; computed verdicts stay visible; see CURRENT_STATE.md)*
-- `Idempotency-Key` header handling on movement/log/invoice POSTs. *(DONE — M8: header handled on job-cost, movement, site-log and project-create POSTs; invoice POSTs follow when M5 lands)*
+- `Idempotency-Key` header handling on movement/log/invoice POSTs. *(DONE — M8: header handled on job-cost, movement, site-log, project-create and invoice POSTs)*
 - *(M11)* `GET /auth/google/authorize` (redirect), `GET /auth/google/callback` (OIDC code exchange → link-or-login ICE user → issue ICE JWT pair), `POST /auth/logout` (server-side revoke, joins M9). Unknown-Gmail policy: **admin invite/approval** OR **reject** (owner decision, see §Conflicts).
 - *(M11)* Admin creates a user without password (invitation): `POST /users` accepts `no password` when `google_only=true`; user links identity on first Google sign-in with matching verified email.
 
 **Frontend changes**
-- Project Detail: Job Costs panel (add/list with cost code), Invoices panel, budget vs. spent computation. *(job costs DONE — M4)*
+- Project Detail: Job Costs panel (add/list with cost code), Invoices panel, budget vs. spent computation. *(DONE — M4 + M5)*
 - *(M10)* Command Center: admin "Create Project" form (auto code display), lifecycle action menu (Activate / Complete / Archive / Restore) on project cards + detail; archive filter toggle for admin; completed projects keep appearing under reporting/completed filter.
 - Admin user management: assign supervisors/clients to projects; *(M10 + M11)* invite flow (create without password, "pending Google link" status).
 - Client view house view: replace budget figures with photos/invoices per Phase 6 landing earlier if scope permits. *(M6)*
@@ -121,8 +121,8 @@ Ordering rationale:
 **Acceptance criteria**
 - Two concurrent consumptions of the same item both persist; ledger sum equals `quantity_on_hand`.
 - A supervisor/client blocked from projects after unassignment within one request.
-- `Project.budget_spent` equals `SUM(job_costs)`; milestone completion creates the configured `%` invoice as draft.
-- Client role cannot read any budget field; can read own invoices.
+- `Project.budget_spent` equals `SUM(job_costs)`; milestone completion creates the configured `%` invoice as draft. *(DONE — M4 + M5)*
+- Client role cannot read any budget field; can read own invoices. *(DONE — M3 RBAC slice + M5 restricted shape)*
 - No audit row missing `ip_address`; refresh tokens rotate and deactivated users are cut off immediately. *(M9)*
 - **(M10)** Admin creates a project → gets a unique auto-generated code; project can be walked DRAFT→ACTIVE→COMPLETED→ARCHIVED and back (RESTORE) only via audited admin actions; ARCHIVED absent from normal project lists yet present in reporting; no project state can be hard-deleted; seed/demo projects exist only when a dev/demo flag is set.
 - **(M11)** Sign-in with Google authenticates an existing ICE user (role + project assignments unchanged) or routes unknown emails per the chosen policy; Google never yields ADMIN; Google-linked sessions rotate/revoke refresh tokens and are blocked for deactivated users.

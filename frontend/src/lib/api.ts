@@ -1,7 +1,13 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from "axios";
 import type {
+  BillingMilestone,
+  BillingMilestoneCreateInput,
+  BillingMilestoneUpdateInput,
   HealthOverrideCreateInput,
   HealthOverrideSummary,
+  Invoice,
+  InvoiceClientRead,
+  InvoiceCreateInput,
   Project,
   ProjectCreateInput,
   ProjectHealth,
@@ -138,6 +144,84 @@ export async function revokeHealthOverride(
   overrideId: string
 ): Promise<void> {
   await api.delete(`/projects/${projectId}/health-overrides/${overrideId}`);
+}
+
+// --- Phase 3 M5: billing milestones + milestone-driven invoices ---
+
+export async function listBillingMilestones(
+  projectId: string
+): Promise<BillingMilestone[]> {
+  const { data } = await api.get<BillingMilestone[]>(
+    `/projects/${projectId}/billing-milestones`
+  );
+  return data;
+}
+
+export async function createBillingMilestone(
+  projectId: string,
+  input: BillingMilestoneCreateInput
+): Promise<BillingMilestone> {
+  const { data } = await api.post<BillingMilestone>(
+    `/projects/${projectId}/billing-milestones`,
+    input
+  );
+  return data;
+}
+
+export async function updateBillingMilestone(
+  projectId: string,
+  milestoneId: string,
+  input: BillingMilestoneUpdateInput
+): Promise<BillingMilestone> {
+  const { data } = await api.patch<BillingMilestone>(
+    `/projects/${projectId}/billing-milestones/${milestoneId}`,
+    input
+  );
+  return data;
+}
+
+export async function completeBillingMilestone(
+  projectId: string,
+  milestoneId: string
+): Promise<BillingMilestone> {
+  const { data } = await api.post<BillingMilestone>(
+    `/projects/${projectId}/billing-milestones/${milestoneId}/complete`
+  );
+  return data;
+}
+
+// Admin/procurement receive the full InvoiceRead shape; clients receive the
+// restricted InvoiceClientRead shape. Callers should type the response to the
+// shape their role is allowed to see.
+export async function listInvoices(
+  projectId: string
+): Promise<Invoice[] | InvoiceClientRead[]> {
+  const { data } = await api.get<Invoice[] | InvoiceClientRead[]>(
+    `/projects/${projectId}/invoices`
+  );
+  return data;
+}
+
+export async function createInvoice(
+  projectId: string,
+  input: InvoiceCreateInput
+): Promise<Invoice> {
+  const { data } = await api.post<Invoice>(
+    `/projects/${projectId}/invoices`,
+    input
+  );
+  return data;
+}
+
+export async function transitionInvoice(
+  projectId: string,
+  invoiceId: string,
+  action: "issue" | "mark-paid" | "cancel"
+): Promise<Invoice> {
+  const { data } = await api.post<Invoice>(
+    `/projects/${projectId}/invoices/${invoiceId}/${action}`
+  );
+  return data;
 }
 
 api.interceptors.response.use(

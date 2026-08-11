@@ -4,7 +4,16 @@ from app.models.audit import AuditLog
 from app.models.task import Task, TaskStatus
 from app.models.site_log import DailySiteLog
 from app.models.inventory import InventoryItem, StockMovement, MovementType
-from app.models.finance import JobCost, Invoice, InvoiceStatus, ExternalSyncStatus, CostCode
+from app.models.finance import (
+    JobCost,
+    Invoice,
+    InvoiceStatus,
+    ExternalSyncStatus,
+    CostCode,
+    BillingMilestone,
+    BillingMilestoneStatus,
+    BillingType,
+)
 from app.models.health import HealthOverride, HealthOverrideTarget, HealthOverrideValue
 from app.models.idempotency import IdempotencyRecord
 
@@ -27,6 +36,9 @@ __all__ = [
     "InvoiceStatus",
     "ExternalSyncStatus",
     "CostCode",
+    "BillingMilestone",
+    "BillingMilestoneStatus",
+    "BillingType",
     "HealthOverride",
     "HealthOverrideTarget",
     "HealthOverrideValue",

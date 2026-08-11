@@ -272,3 +272,87 @@ export interface ProjectHealth {
   data_sufficiency: Record<"timeline" | "budget" | "safety", boolean>;
   overrides: HealthOverrideSummary[];
 }
+
+// --- Phase 3 M5: billing milestones + milestone-driven invoices ---
+
+export type BillingType = "percentage" | "fixed_amount";
+export type BillingMilestoneStatus = "not_started" | "in_progress" | "completed";
+export type InvoiceStatus = "draft" | "sent" | "paid" | "cancelled";
+
+export interface BillingMilestone {
+  id: string;
+  project_id: string;
+  name: string;
+  billing_type: BillingType;
+  billing_percentage: number | null;
+  fixed_amount: number | null;
+  description: string | null;
+  sort_order: number;
+  status: BillingMilestoneStatus;
+  completed_at: string | null;
+  completed_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BillingMilestoneCreateInput {
+  name: string;
+  billing_type: BillingType;
+  billing_percentage?: number | null;
+  fixed_amount?: number | null;
+  description?: string | null;
+  sort_order?: number;
+}
+
+export interface BillingMilestoneUpdateInput {
+  name?: string;
+  billing_type?: BillingType;
+  billing_percentage?: number | null;
+  fixed_amount?: number | null;
+  description?: string | null;
+  sort_order?: number;
+}
+
+export interface Invoice {
+  id: string;
+  project_id: string;
+  project_code: string;
+  invoice_number: string;
+  billing_milestone_id: string | null;
+  milestone_name: string;
+  amount: number;
+  status: InvoiceStatus;
+  overdue: boolean;
+  due_date: string;
+  notes: string | null;
+  issued_at: string | null;
+  issued_by: string | null;
+  paid_at: string | null;
+  paid_by: string | null;
+  cancelled_at: string | null;
+  cancelled_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InvoiceClientRead {
+  id: string;
+  project_id: string;
+  project_code: string;
+  invoice_number: string;
+  milestone_name: string;
+  amount: number;
+  status: InvoiceStatus;
+  overdue: boolean;
+  due_date: string;
+  issued_at: string | null;
+  paid_at: string | null;
+  cancelled_at: string | null;
+  created_at: string;
+}
+
+export interface InvoiceCreateInput {
+  billing_milestone_id: string;
+  due_date?: string | null;
+  notes?: string | null;
+}

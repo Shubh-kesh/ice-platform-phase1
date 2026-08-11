@@ -84,4 +84,12 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_users_email'), table_name='users')
     op.drop_table('users')
     op.drop_table('projects')
+    # Enum types are created by the CREATE TABLE path and are NOT auto-dropped
+    # with the tables; drop them explicitly so the chain is replayable (the
+    # pattern used by every later migration's downgrade).
+    sa.Enum(name='project_status').drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name='timeline_health').drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name='budget_health').drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name='safety_health').drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name='user_role').drop(op.get_bind(), checkfirst=True)
     # ### end Alembic commands ###

@@ -1,4 +1,4 @@
-# Session Notes — Phase 3 (M1 + M2 + M4 + M10 + M3 shipped; M11 planned)
+# Session Notes — Phase 3 (M1 + M2 + M4 + M10 + M3 + M8 + M5 shipped; M6 planned)
 
 **Session dates:** Aug 9–11, 2026. Branch `claude-development`.
 
@@ -66,10 +66,45 @@ session-local details needed to resume.
 - Verified budgets stay consistent across ARCHIVE/RESTORE and the health
   `budget` verdict now reads the ledger (0-cost projects show NOT_RATED, not
   GREEN).
+- **M5 — Milestone Invoicing (Aug 11):** migration `g5b6c7d8e9f0` (new
+  `billing_milestones` table + `billing_type`/`billing_milestone_status` enums;
+  `invoices` gets `invoice_number` (unique), `billing_milestone_id`, notes +
+  issuer/payer/canceller attribution, and the partial double-billing index
+  `(billing_milestone_id) WHERE status <> 'CANCELLED'`).
+  - `app/api/v1/invoicing.py`, `app/services/invoicing.py`, `app/schemas/invoice.py`
+    (all new): admin-owned milestone config (one-rule invariant, duplicate-name
+    409, frozen on COMPLETED projects, immutable once referenced by an
+    invoice), terminal audited completion, server-side invoice amount derivation
+    (`%` of `budget_total`, ROUND_HALF_UP; or fixed), per-project `INV-…-####`
+    numbering under a project row lock, DRAFT→SENT→PAID + CANCELLED transitions
+    (row-locked, audited, cancel frees the milestone), OVERDUE derived on read,
+    M8 `Idempotency-Key` support, and lifecycle gating (ACTIVE-only generate;
+    COMPLETED/ARCHIVED frozen). RBAC: procurement view-only, supervisors get no
+    finance surface, clients see the restricted `InvoiceClientRead` shape on
+    assigned projects (archived → 404).
+  - Frontend `InvoicingPanel.tsx` (admin/proc: contract/invoiced/outstanding
+    strip, add-milestone, complete + generate, issue/mark-paid/cancel) and
+    `ClientInvoicesPanel.tsx` (read-only payment requests).
+  - Tests: `tests/test_invoicing.py` (31) + `tests/test_migrations.py` (real
+    Alembic upgrade/downgrade/replay on a scratch DB). The migration test
+    caught a **pre-existing chain bug** — the initial migration
+    `5d2e53a7df4e` never dropped its 5 enum types on downgrade (now fixed), so
+    the chain is replayable. Suite **125 → 157 passing**; ruff clean in new
+    files; mypy down to 10 (was 12).
 
-## 2. Files changed in this session (M10 + M3 — NOT yet committed)
+## 2. Files changed in this session (M10 + M3 + M8 + M5 — NOT yet committed)
 
-Backend: `alembic/versions/d7e9f1a2b3c4_m10_project_lifecycle.py`,
+Backend (M5): `alembic/versions/g5b6c7d8e9f0_m5_invoicing.py` (new),
+`alembic/versions/5d2e53a7df4e_initial_schema_users_projects_.py` (enum-drop fix),
+`app/models/finance.py`, `app/models/__init__.py`, `app/api/v1/invoicing.py` (new),
+`app/services/invoicing.py` (new), `app/schemas/invoice.py` (new),
+`app/api/v1/router.py`, `tests/test_invoicing.py` (new),
+`tests/test_migrations.py` (new).
+Frontend (M5): `src/components/InvoicingPanel.tsx` (new),
+`src/components/ClientInvoicesPanel.tsx` (new), `src/types/index.ts`,
+`src/lib/api.ts`, `src/pages/ProjectDetail.tsx`.
+Earlier-session files (M10 + M3, see prior entries):
+`alembic/versions/d7e9f1a2b3c4_m10_project_lifecycle.py`,
 `alembic/versions/e8f2a3c5b7e4_m3_health_overrides.py` (new),
 `app/models/project.py`, `app/models/audit.py`, `app/models/health.py` (new),
 `app/models/__init__.py`, `app/schemas/project.py`, `app/schemas/health.py`
@@ -77,8 +112,9 @@ Backend: `alembic/versions/d7e9f1a2b3c4_m10_project_lifecycle.py`,
 `app/services/projects.py` (new), `app/services/health.py` (new), `app/seed.py`,
 `tests/conftest.py`, `tests/test_project_lifecycle.py` (new),
 `tests/test_health.py` (new).
-Frontend: `src/types/index.ts`, `src/lib/api.ts`, `src/pages/CommandCenter.tsx`,
-`src/pages/ProjectDetail.tsx`, `src/components/ProjectCard.tsx`,
+Frontend (earlier): `src/types/index.ts`, `src/lib/api.ts`,
+`src/pages/CommandCenter.tsx`, `src/pages/ProjectDetail.tsx`,
+`src/components/ProjectCard.tsx`,
 `src/components/HealthDot.tsx`, `src/components/KpiStrip.tsx`,
 `src/components/ProjectHealthPanel.tsx` (new).
 Docs: `docs/CURRENT_STATE.md`, `docs/ROADMAP.md`, `docs/SESSION_NOTES.md`,
@@ -134,27 +170,25 @@ Phase 3 — "Integrity, Operable RBAC, Admin Lifecycle & the Finance Pillar".
 
 ## 6. Current milestone
 
-**M3 — Computed Project Health** is implemented and verified live on the dev
-environment (uncommitted); next up is **M5 — Invoicing**.
+**M5 — Milestone Invoicing** is implemented and verified (backend tests + real
+Alembic upgrade/downgrade on a scratch DB + frontend build/lint); next up is
+**M6 — Client view-only scope** (the M3 serializer slice + M5 restricted
+invoice shape are already in place).
 
 ## 7. Phase 3 remaining, in execution order
 
-1. **M5 — Invoicing** (milestone → invoice generation) gated to ACTIVE.
-2. **M6 — Client view-only scope** (no budget fields for client role) — the M3
-   serializer slice is a head start.
-3. **M7 — Task date-order validation on update + dependency cycle detection.**
-4. **M8 — Idempotency keys on movement/site-log/invoice POSTs.**
-5. **M9 — Token security:** refresh rotation + server-side revocation.
-6. **M11 — Google Sign-In** (NEW): Google authenticates only; ICE owns identity/
+1. **M6 — Client view-only scope** (no budget fields for client role) — the M3
+   serializer slice and M5 client invoice shape are a head start.
+2. **M7 — Task date-order validation on update + dependency cycle detection.**
+3. **M9 — Token security:** refresh rotation + server-side revocation.
+4. **M11 — Google Sign-In** (NEW): Google authenticates only; ICE owns identity/
    role/assignments/permissions; never auto-grants ADMIN; inherits M9 sessions.
    Real-user rollout gate — after Phase 4 infra.
 
 Phase 3 DB stubs still pending: unique `inventory_items (project_id, name)`,
-`daily_site_logs (project_id, log_date)`; `invoices` milestone mapping (M5);
-stock_movements/audit_logs list indexes; lifecycle-transition row lock (the M3
-override create/revoke flow already uses one). Pre-existing debt (not in Phase 3
-scope): ruff 4 F401 errors, mypy 12 errors, client reads budgets (M6), no
-frontend tests.
+`daily_site_logs (project_id, log_date)`; stock_movements/audit_logs list
+indexes. Pre-existing debt (not in Phase 3 scope): ruff 4 F401 errors, mypy 10
+errors (was 12 — M5 fixed the `finance.py` forward refs), no frontend tests.
 
 ## 8. Exact next action
 
@@ -175,8 +209,9 @@ frontend tests.
    running the OLD image + docker-cp'd code — ephemeral. When network to Docker
    Hub returns, `docker compose up -d --build backend` will produce the real new
    image (and the Dockerfile change is already in the repo).
-3. Commit the M3 work when the owner asks.
-4. Then **M5 — Invoicing** (milestone → invoice generation over ACTIVE).
+3. Commit the M5 work when the owner asks.
+4. Then **M6 — Client view-only scope** (finalize the client portal slice:
+   already no budget figures; payment-request list shipped with M5).
 
 ## 9. Ambiguities / conflicts captured
 
