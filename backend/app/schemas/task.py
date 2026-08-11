@@ -33,6 +33,19 @@ class TaskUpdate(BaseModel):
     depends_on_id: uuid.UUID | None = None
     sort_order: int | None = None
 
+    @model_validator(mode="after")
+    def check_date_order(self):
+        # Catches the both-dates-set case at the schema boundary (422, same as
+        # TaskCreate); the one-date-set partial cases are checked by the
+        # service after merging with the persisted row.
+        if (
+            self.start_date is not None
+            and self.end_date is not None
+            and self.end_date < self.start_date
+        ):
+            raise ValueError("end_date must be on or after start_date")
+        return self
+
 
 class TaskRead(TaskBase):
     model_config = ConfigDict(from_attributes=True)

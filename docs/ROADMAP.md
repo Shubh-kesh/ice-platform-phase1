@@ -32,7 +32,7 @@
 - **MUST:** Project health computed from real signals (schedule vs. dates → timeline; job costs vs. budget → budget; site safety flags → safety) with manual-override permitted + audited. *(DONE — M3; ordered AFTER M10 so health only computes over ACTIVE projects; safety dimension is NOT_RATED until a structured safety/quality data model exists)*
 - **MUST:** Invoicing — `Invoice` CRUD; milestone → invoice generation rules (e.g., "Slab Completed → 20%"). *(DONE — M5; ordered AFTER M10 so lifecycle gates invoicing on ACTIVE projects)*
 - **SHOULD:** Client view-only access: invoices + progress, no budget figures (role-scoped response contract). *(M6 — must land before real clients use Google Sign-In)*
-- **SHOULD:** Task date-order validation on update + dependency cycle detection. *(M7)*
+- **SHOULD:** Task date-order validation on update + dependency cycle detection. *(DONE — M7: date-order enforced on PATCH incl. partial updates; `depends_on_id` same-project/self/existence checks on update; 2- and 3-node cycle detection; task writes serialized via the project row lock so opposing concurrent links can't commit a cycle. App-layer only — no migration. See `docs/CURRENT_STATE.md` §4b)*
 - **SHOULD:** Idempotency keys on POSTs (movements, site logs, invoices). *(DONE — M8: backend infra + `Idempotency-Key` header on POST job-costs, inventory movements, site-logs and project creation; `POST /projects/{id}/invoices` also protected since M5)*
 - **MUST:** Token security — refresh-token rotation + server-side revocation + optional httpOnly cookie. *(M9 — prerequisite for M11)*
 - **MUST:** **Google Sign-In (NEW — M11)** — Google as **authentication only**; ICE retains identity, roles, authorizations, project assignments, permissions. Google never grants ADMIN. Session handling inherits M9 rotation/revocation/deactivation cutoff. Plans land here while Phase 4 provides the deploy/observability rails before real users arrive.
@@ -50,7 +50,7 @@ Execution order (M1/M2/M4 shipped):
 5. **M3 — computed health** — DONE. Reads lifecycle-aware project set (skip non-ACTIVE); deterministic Timeline/Budget verdicts + audited admin-only override (see `docs/CURRENT_STATE.md` §4b).
 6. **M5 — invoicing** — DONE. Billing milestones (schedule of values) → server-side invoice amounts, lifecycle-gated (only ACTIVE generate; COMPLETED frozen; ARCHIVED hidden), client read-only restricted shape. See `docs/CURRENT_STATE.md` §4b.
 7. **M6 — client view-only scope** — before real clients can authenticate.
-8. **M7 — task validation** — independent; flexible slot.
+8. **M7 — task validation** — DONE. Date-order on PATCH (full + partial), dependency same-project/self/existence on update, 2- and 3-node cycle rejection; task writes take the project row lock so concurrent opposing links can't form a cycle. App-layer only, no migration, no frontend change. See `docs/CURRENT_STATE.md` §4b.
 9. **M8 — idempotency keys** — DONE. Server-side `Idempotency-Key` support on POST job-costs, inventory movements, site-logs and project creation: a retry replays the stored response (no double-mutation), a failed attempt frees the key, and concurrent same-key requests execute exactly once via a DB unique-index claim ledger. See `docs/CURRENT_STATE.md` §4b.
 10. **M9 — token security** — prerequisite for Google Sign-In.
 11. **M11 — Google Sign-In** (NEW) — the real-user rollout gate; after Phase 4 rails.
