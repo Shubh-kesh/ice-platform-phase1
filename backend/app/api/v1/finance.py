@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_role
+from app.api.deps import get_idempotency_guard, require_role
 from app.api.project_access import assert_project_writable, get_project_or_404
 from app.core.database import get_db
 from app.middleware.audit import record_audit
@@ -30,6 +30,7 @@ from app.models.project import Project
 from app.models.user import User, UserRole
 from app.schemas.finance import BudgetRollupRead, JobCostCreate, JobCostRead, JobCostUpdate
 from app.services.finance import budget_rollup, refresh_budget_spent
+from app.services.idempotency import IdempotencyGuard
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["finance"])
 
@@ -91,7 +92,16 @@ async def create_job_cost(
     payload: JobCostCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[User, Depends(write_roles)],
+    idem: Annotated[IdempotencyGuard, Depends(get_idempotency_guard)],
 ):
+    """Create a job-cost line and re-derive budget_spent from the ledger.
+
+    Protected by an Idempotency-Key: a retry of an already-committed request
+    replays the original response instead of double-charging the budget.
+    """
+    if idem.replay is not None:
+        return idem.replay
+
     project = await _get_project_locked(db, project_id)
     assert_project_writable(project)  # ARCHIVED projects are read-only
 
@@ -111,8 +121,10 @@ async def create_job_cost(
         changes={"cost_code": {"old": None, "new": cost.cost_code.value}, "amount": {"old": None, "new": float(cost.amount)}},
     )
 
+    await idem.finish(
+        db, status_code=status.HTTP_201_CREATED, response_model=JobCostRead, obj=cost
+    )
     await db.commit()
-    await db.refresh(cost)
     return cost
 
 

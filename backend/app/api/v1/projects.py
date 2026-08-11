@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_role
+from app.api.deps import get_current_user, get_idempotency_guard, require_role
 from app.api.project_access import (
     assert_can_view_project,
     assert_project_writable,
@@ -41,6 +41,7 @@ from app.services.health import (
     load_health_contexts,
 )
 from app.services.projects import generate_project_code
+from app.services.idempotency import IdempotencyGuard
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -237,7 +238,17 @@ async def create_project(
     payload: ProjectCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
     admin: Annotated[User, Depends(admin_only)],
+    idem: Annotated[IdempotencyGuard, Depends(get_idempotency_guard)],
 ):
+    """Create a DRAFT project; project_code is auto-generated.
+
+    Protected by an Idempotency-Key: a retry of an already-committed create
+    replays the original project instead of allocating a second one (with a
+    fresh code, an audit entry and all the follow-on state that anchors to it).
+    """
+    if idem.replay is not None:
+        return idem.replay
+
     # The max()-based code draw can hand two concurrent creators the same
     # PRJ-YYYY-####; the DB unique constraint (uq_projects_project_code)
     # resolves it. The loser rolls back and retries with a freshly
@@ -267,13 +278,17 @@ async def create_project(
                 },
             )
 
+            await idem.finish(
+                db, status_code=status.HTTP_201_CREATED, response_model=ProjectRead, obj=project
+            )
             await db.commit()
-            await db.refresh(project)
             return project
         except IntegrityError:
             # The project_code (or any other) uniqueness conflict — the whole
-            # attempt (row + audit) is rolled back; loop regenerates the code.
+            # attempt (row + audit + idempotency claim) is rolled back; the
+            # loop regenerates the code and reclaims the key before retrying.
             await db.rollback()
+            await idem.reclaim(db)
 
     raise HTTPException(
         status_code=409,

@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_role
+from app.api.deps import get_current_user, get_idempotency_guard, require_role
 from app.api.project_access import assert_project_writable, assert_can_view_project, get_project_or_404
 from app.core.database import get_db
 from app.middleware.audit import record_audit
@@ -35,6 +35,7 @@ from app.schemas.inventory import (
     StockMovementCreate,
     StockMovementRead,
 )
+from app.services.idempotency import IdempotencyGuard
 from app.services.inventory import MOVEMENT_SIGN, reconcile_project_inventory
 
 router = APIRouter(prefix="/projects/{project_id}/inventory", tags=["inventory"])
@@ -143,7 +144,17 @@ async def record_movement(
     payload: StockMovementCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[User, Depends(write_roles)],
+    idem: Annotated[IdempotencyGuard, Depends(get_idempotency_guard)],
 ):
+    """Record a stock movement on the immutable ledger.
+
+    Protected by an Idempotency-Key: the ledger is append-only and
+    quantity_on_hand is a running total, so a double-submitted movement would
+    silently corrupt the balance — a retry must replay instead of re-execute.
+    """
+    if idem.replay is not None:
+        return idem.replay
+
     item = await _get_item_or_404(db, project_id, item_id, for_update=True)
     project = await get_project_or_404(db, project_id)
     assert_project_writable(project)  # ARCHIVED projects are read-only
@@ -178,8 +189,10 @@ async def record_movement(
         },
     )
 
+    await idem.finish(
+        db, status_code=status.HTTP_201_CREATED, response_model=StockMovementRead, obj=movement
+    )
     await db.commit()
-    await db.refresh(movement)
     return movement
 
 

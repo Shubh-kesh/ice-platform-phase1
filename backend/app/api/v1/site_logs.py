@@ -10,13 +10,14 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_role
+from app.api.deps import get_current_user, get_idempotency_guard, require_role
 from app.api.project_access import assert_can_view_project, assert_project_writable, get_project_or_404
 from app.core.database import get_db
 from app.middleware.audit import record_audit
 from app.models.site_log import DailySiteLog
 from app.models.user import User, UserRole
 from app.schemas.site_log import DailySiteLogCreate, DailySiteLogRead
+from app.services.idempotency import IdempotencyGuard
 
 router = APIRouter(prefix="/projects/{project_id}/site-logs", tags=["site-logs"])
 
@@ -46,7 +47,16 @@ async def create_site_log(
     payload: DailySiteLogCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[User, Depends(write_roles)],
+    idem: Annotated[IdempotencyGuard, Depends(get_idempotency_guard)],
 ):
+    """Append a daily site log entry.
+
+    Protected by an Idempotency-Key: this feed is append-only (no update or
+    delete), so a double-submit must replay rather than append a duplicate day.
+    """
+    if idem.replay is not None:
+        return idem.replay
+
     project = await get_project_or_404(db, project_id)
     if user.role == UserRole.SITE_SUPERVISOR:
         await assert_can_view_project(db, user, project)
@@ -65,6 +75,8 @@ async def create_site_log(
         changes={"log_date": {"old": None, "new": str(log.log_date)}},
     )
 
+    await idem.finish(
+        db, status_code=status.HTTP_201_CREATED, response_model=DailySiteLogRead, obj=log
+    )
     await db.commit()
-    await db.refresh(log)
     return log

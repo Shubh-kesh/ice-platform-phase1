@@ -33,7 +33,7 @@
 - **MUST:** Invoicing — `Invoice` CRUD; milestone → invoice generation rules (e.g., "Slab Completed → 20%"). *(M5 — ordered AFTER M10 so lifecycle gates invoicing on ACTIVE projects)*
 - **SHOULD:** Client view-only access: invoices + progress, no budget figures (role-scoped response contract). *(M6 — must land before real clients use Google Sign-In)*
 - **SHOULD:** Task date-order validation on update + dependency cycle detection. *(M7)*
-- **SHOULD:** Idempotency keys on POSTs (movements, site logs, invoices). *(M8)*
+- **SHOULD:** Idempotency keys on POSTs (movements, site logs, invoices). *(DONE — M8: backend infra + `Idempotency-Key` header on POST job-costs, inventory movements, site-logs and project creation; invoice POSTs are still M5-schema-only, nothing to protect yet — the shared dependency enables them in one line)*
 - **MUST:** Token security — refresh-token rotation + server-side revocation + optional httpOnly cookie. *(M9 — prerequisite for M11)*
 - **MUST:** **Google Sign-In (NEW — M11)** — Google as **authentication only**; ICE retains identity, roles, authorizations, project assignments, permissions. Google never grants ADMIN. Session handling inherits M9 rotation/revocation/deactivation cutoff. Plans land here while Phase 4 provides the deploy/observability rails before real users arrive.
 
@@ -51,7 +51,7 @@ Execution order (M1/M2/M4 shipped):
 6. **M5 — invoicing** — lifecycle-gated (only ACTIVE generate; COMPLETED frozen; ARCHIVED hidden).
 7. **M6 — client view-only scope** — before real clients can authenticate.
 8. **M7 — task validation** — independent; flexible slot.
-9. **M8 — idempotency keys** — independent; flexible slot.
+9. **M8 — idempotency keys** — DONE. Server-side `Idempotency-Key` support on POST job-costs, inventory movements, site-logs and project creation: a retry replays the stored response (no double-mutation), a failed attempt frees the key, and concurrent same-key requests execute exactly once via a DB unique-index claim ledger. See `docs/CURRENT_STATE.md` §4b.
 10. **M9 — token security** — prerequisite for Google Sign-In.
 11. **M11 — Google Sign-In** (NEW) — the real-user rollout gate; after Phase 4 rails.
 
@@ -86,7 +86,7 @@ Ordering rationale:
 - `GET/POST /api/v1/projects/{id}/job-costs`, `GET /api/v1/projects/{id}/budget` (computed roll-up). *(DONE — M4)*
 - `GET/POST/PATCH /api/v1/projects/{id}/invoices`. *(M5)*
 - Health fields: computed + override endpoint (`PATCH /api/v1/projects/{id}/health-override`). *(DONE — M3: `GET/POST/DELETE /projects/{id}/health-overrides` + `GET /projects/health` roll-up, both admin-only; computed verdicts stay visible; see CURRENT_STATE.md)*
-- `Idempotency-Key` header handling on movement/log/invoice POSTs. *(M8)*
+- `Idempotency-Key` header handling on movement/log/invoice POSTs. *(DONE — M8: header handled on job-cost, movement, site-log and project-create POSTs; invoice POSTs follow when M5 lands)*
 - *(M11)* `GET /auth/google/authorize` (redirect), `GET /auth/google/callback` (OIDC code exchange → link-or-login ICE user → issue ICE JWT pair), `POST /auth/logout` (server-side revoke, joins M9). Unknown-Gmail policy: **admin invite/approval** OR **reject** (owner decision, see §Conflicts).
 - *(M11)* Admin creates a user without password (invitation): `POST /users` accepts `no password` when `google_only=true`; user links identity on first Google sign-in with matching verified email.
 
@@ -105,11 +105,12 @@ Ordering rationale:
 - **MUST:** Inventory concurrency test (two parallel movements → both reflected; no lost update).
 - **MUST:** Assignment API tests (admin-only, isolation effects on supervisors/clients).
 - **MUST:** `test_google_auth.py` (M11) — OIDC code-exchange success links by verified email to existing ICE user preserving role/assignments; unknown email rejected or goes to invite path per decision; Google never grants admin; google_sub unique + unlink/relink; deactivated ICE user cut off at callback; refresh rotation + revocation enforced on the Google session; email-change handling (old link invalid); audit login/auth events.
+- **MUST:** `test_idempotency.py` (M8) — retry with the same key + body replays the stored response (same resource id, no double-mutation, budget/stock unchanged); same key + different body/project → 409; a failed first attempt frees the key for a safe retry; concurrent same-key requests execute exactly once; keys are namespaced per user and per operation; invalid key lengths → 400.
 - **MUST:** M9 token tests (rotation: old refresh invalid after use; revocation: logout kills server-side; deactivated user blocked on next use).
 
 **Security considerations**
 - Role-scope project responses per role; never leak `budget_*` to client. *(M6)*
-- Idempotency-key validation (server-side key namespace per user). *(M8)*
+- Idempotency-key validation (server-side key namespace per user). *(DONE — M8)*
 - **M10:** lifecycle transitions admin-only + fully audited (actor, timestamp, old/new state). ARCHIVED projects are read-only for admins and invisible to others; never a DELETE endpoint. Project codes validated/format-enforced; uniqueness guaranteed.
 - **M11:** Google is authentication only — ICE user record/role/assignments/permissions are the authorization source; **Google auth must never auto-grant ADMIN**. Validate OIDC `iss`/`aud`/`email_verified`, PKCE/nonce + state on callback; link by verified email only; deactivated users blocked; refresh rotation/revocation (M9) inherited; audit every auth event (login/refresh/logout/email-change). Account-linking risk: prevent silent cross-account takeover — re-verify email + require explicit consent if `google_sub` already bound to another ICE user.
 - Audit every finance and assignment write.
