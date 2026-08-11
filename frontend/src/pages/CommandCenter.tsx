@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Archive, Loader2, Plus, X } from "lucide-react";
-import { api, createProject } from "../lib/api";
+import { api, createProject, getProjectsHealth } from "../lib/api";
 import type { Project, ProjectCreateInput } from "../types";
 import { AppShell } from "../components/AppShell";
 import { KpiStrip } from "../components/KpiStrip";
@@ -34,13 +34,24 @@ export function CommandCenter() {
     queryKey: ["projects", showArchived],
     queryFn: async () => {
       const { data } = await api.get<Project[]>("/projects", {
-        params: showArchived ? { include: "archived" } : {},
+        params: showArchived ? { include_archived: true } : {},
       });
       return data;
     },
   });
 
+  // Deterministic health is served by the API (M3); the frontend no longer
+  // derives an "overall" verdict itself.
+  const { data: healths = [] } = useQuery({
+    queryKey: ["projects-health", showArchived],
+    queryFn: () => getProjectsHealth(showArchived),
+  });
+
   const isAdmin = user?.role === "admin";
+  const canViewBudget =
+    user?.role === "admin" || user?.role === "procurement_manager";
+
+  const healthByProject = new Map(healths.map((h) => [h.project_id, h]));
 
   const createProjectMutation = useMutation({
     mutationFn: createProject,
@@ -138,11 +149,20 @@ export function CommandCenter() {
       {projects && projects.length > 0 && (
         <>
           <div className="mb-6">
-            <KpiStrip projects={projects} />
+            <KpiStrip
+              projects={projects}
+              healths={healths}
+              canViewBudget={canViewBudget}
+            />
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {projects.map((project) => (
-              <ProjectCard key={project.id} project={project} />
+              <ProjectCard
+                key={project.id}
+                project={project}
+                health={healthByProject.get(project.id)}
+                showBudget={canViewBudget}
+              />
             ))}
           </div>
         </>

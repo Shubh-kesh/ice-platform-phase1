@@ -15,7 +15,7 @@ export type ProjectStatus =
   | "completed"
   | "archived";
 
-export type HealthStatus = "green" | "amber" | "red";
+export type HealthStatus = "green" | "amber" | "red" | "not_rated";
 
 export interface User {
   id: string;
@@ -216,4 +216,59 @@ export interface BudgetRollup {
   budget_spent: number;
   budget_remaining: number;
   by_cost_code: Partial<Record<CostCode, number>>;
+}
+
+// --- Phase 3 M3: deterministic computed project health ---
+
+export type HealthOverrideTarget = "overall" | "timeline" | "budget" | "safety";
+export type HealthOverrideValue = "green" | "amber" | "red";
+
+export interface HealthDimension {
+  value: HealthStatus;
+  effective: HealthStatus;
+  rated: boolean;
+  reasons: string[];
+  data_sufficient: boolean;
+}
+
+export interface HealthOverall {
+  value: HealthStatus;
+  effective: HealthStatus;
+  rated: boolean;
+  reasons: string[];
+  basis: string[];
+}
+
+export interface HealthOverrideSummary {
+  id: string;
+  project_id: string;
+  applied_to: HealthOverrideTarget;
+  value: HealthOverrideValue;
+  reason: string;
+  set_by: string | null;
+  created_at: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  revoked_by: string | null;
+  active: boolean;
+}
+
+export interface HealthOverrideCreateInput {
+  applied_to: HealthOverrideTarget;
+  value: HealthOverrideValue;
+  reason: string;
+  expires_in_days?: number | null;
+}
+
+export interface ProjectHealth {
+  project_id: string;
+  project_code: string;
+  status: ProjectStatus;
+  frozen: boolean;
+  timeline: HealthDimension;
+  budget: HealthDimension;
+  safety: HealthDimension;
+  overall: HealthOverall;
+  data_sufficiency: Record<"timeline" | "budget" | "safety", boolean>;
+  overrides: HealthOverrideSummary[];
 }

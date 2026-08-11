@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # ---- Stage 1: builder — installs deps into a venv, nothing else ----
 FROM python:3.12-slim AS builder
 

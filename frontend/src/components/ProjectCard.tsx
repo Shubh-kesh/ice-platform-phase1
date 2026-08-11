@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
-import type { Project } from "../types";
-import { HealthDot, overallHealth } from "./HealthDot";
+import type { Project, ProjectHealth } from "../types";
+import { HealthDot } from "./HealthDot";
 
 const STATUS_LABEL: Record<Project["status"], string> = {
   draft: "Draft",
@@ -20,6 +20,14 @@ const STATUS_TONE: Record<Project["status"], string> = {
   archived: "border-ink-border text-paper-faint",
 };
 
+// overall border tone for an effective verdict (server-derived, M3).
+const OVERALL_TONE: Record<ProjectHealth["overall"]["effective"], string> = {
+  green: "border-l-status-green",
+  amber: "border-l-status-amber",
+  red: "border-l-status-red",
+  not_rated: "border-l-ink-border",
+};
+
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -28,22 +36,30 @@ function formatCurrency(value: number) {
   }).format(value);
 }
 
-export function ProjectCard({ project }: { project: Project }) {
-  const overall = overallHealth(
-    project.timeline_health,
-    project.budget_health,
-    project.safety_health
-  );
-  const overallBorder = {
-    green: "border-l-status-green",
-    amber: "border-l-status-amber",
-    red: "border-l-status-red",
-  }[overall];
+const DIMENSION_ROWS: {
+  key: "timeline" | "budget" | "safety";
+  label: string;
+}[] = [
+  { key: "timeline", label: "Timeline" },
+  { key: "budget", label: "Budget" },
+  { key: "safety", label: "Safety" },
+];
+
+export function ProjectCard({
+  project,
+  health,
+  showBudget,
+}: {
+  project: Project;
+  health?: ProjectHealth;
+  showBudget: boolean;
+}) {
+  const overall = health?.overall.effective ?? "not_rated";
 
   return (
     <Link
       to={`/projects/${project.id}`}
-      className={`group relative block rounded-md border border-ink-border ${overallBorder} border-l-4 bg-ink-surface p-4 shadow-panel transition-colors hover:bg-ink-raised`}
+      className={`group relative block rounded-md border border-ink-border ${OVERALL_TONE[overall]} border-l-4 bg-ink-surface p-4 shadow-panel transition-colors hover:bg-ink-raised`}
     >
       {/* Drafting corner marks — the signature detail, evoking an
           architectural drawing sheet's title-block corners. */}
@@ -87,28 +103,48 @@ export function ProjectCard({ project }: { project: Project }) {
         </div>
       </div>
 
-      {/* Health row */}
+      {/* Health row — verdicts come from the server (M3); each dot carries its
+          first explanation sentence in the tooltip. */}
       <div className="mb-3 flex items-center gap-4 text-[11px] text-paper-muted">
-        <span className="flex items-center gap-1.5">
-          <HealthDot status={project.timeline_health} /> Timeline
-        </span>
-        <span className="flex items-center gap-1.5">
-          <HealthDot status={project.budget_health} /> Budget
-        </span>
-        <span className="flex items-center gap-1.5">
-          <HealthDot status={project.safety_health} /> Safety
-        </span>
+        {DIMENSION_ROWS.map(({ key, label }) => {
+          const dim = health?.[key];
+          return (
+            <span key={key} className="flex items-center gap-1.5">
+              <HealthDot
+                status={dim?.effective ?? "not_rated"}
+                reason={dim?.reasons[0]}
+              />
+              {label}
+            </span>
+          );
+        })}
       </div>
 
-      {/* Budget */}
-      <div className="flex items-baseline justify-between border-t border-ink-border pt-2 font-mono text-xs tabular">
-        <span className="text-paper-muted">
-          {formatCurrency(project.budget_spent)}
-        </span>
-        <span className="text-paper-faint">
-          / {formatCurrency(project.budget_total)}
-        </span>
-      </div>
+      {/* Bottom row — role-gated money (M6 slice / M3): admin/procurement see
+          the spent/total amounts; supervisor/client see only a budget badge. */}
+      {showBudget ? (
+        <div className="flex items-baseline justify-between border-t border-ink-border pt-2 font-mono text-xs tabular">
+          <span className="text-paper-muted">
+            {formatCurrency(project.budget_spent)}
+          </span>
+          <span className="text-paper-faint">
+            / {formatCurrency(project.budget_total)}
+          </span>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between border-t border-ink-border pt-2 text-[11px] text-paper-muted">
+          <span className="flex items-center gap-1.5">
+            <HealthDot
+              status={health?.budget.effective ?? "not_rated"}
+              reason={health?.budget.reasons[0]}
+            />
+            Budget
+          </span>
+          <span className="font-mono text-[10px] uppercase tracking-wide text-paper-faint">
+            colour only
+          </span>
+        </div>
+      )}
     </Link>
   );
 }

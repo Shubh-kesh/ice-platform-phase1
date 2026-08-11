@@ -21,7 +21,7 @@ class AuditLog(Base):
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
-    action: Mapped[str] = mapped_column(String(20), nullable=False)  # create | update | delete
+    action: Mapped[str] = mapped_column(String(100), nullable=False)  # create | update | delete | health_override | ...
     table_name: Mapped[str] = mapped_column(String(100), nullable=False)
     record_id: Mapped[str] = mapped_column(String(100), nullable=False)
 

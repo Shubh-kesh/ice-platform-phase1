@@ -1,5 +1,12 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from "axios";
-import type { Project, ProjectCreateInput, TokenResponse } from "../types";
+import type {
+  HealthOverrideCreateInput,
+  HealthOverrideSummary,
+  Project,
+  ProjectCreateInput,
+  ProjectHealth,
+  TokenResponse,
+} from "../types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000/api/v1";
 
@@ -59,7 +66,7 @@ async function refreshAccessToken(): Promise<string | null> {
 
 export async function getProjects(includeArchived = false): Promise<Project[]> {
   const { data } = await api.get<Project[]>("/projects", {
-    params: includeArchived ? { include: "archived" } : {},
+    params: includeArchived ? { include_archived: true } : {},
   });
   return data;
 }
@@ -88,6 +95,49 @@ export async function transitionProject(
     `/projects/${projectId}/${action}`
   );
   return data;
+}
+
+// --- Phase 3 M3: computed project health + audited admin overrides ---
+
+export async function getProjectsHealth(
+  includeArchived = false
+): Promise<ProjectHealth[]> {
+  const { data } = await api.get<ProjectHealth[]>("/projects/health", {
+    params: includeArchived ? { include_archived: true } : {},
+  });
+  return data;
+}
+
+export async function getProjectHealth(projectId: string): Promise<ProjectHealth> {
+  const { data } = await api.get<ProjectHealth>(`/projects/${projectId}/health`);
+  return data;
+}
+
+export async function getHealthOverrides(
+  projectId: string
+): Promise<HealthOverrideSummary[]> {
+  const { data } = await api.get<HealthOverrideSummary[]>(
+    `/projects/${projectId}/health-overrides`
+  );
+  return data;
+}
+
+export async function setHealthOverride(
+  projectId: string,
+  input: HealthOverrideCreateInput
+): Promise<HealthOverrideSummary> {
+  const { data } = await api.post<HealthOverrideSummary>(
+    `/projects/${projectId}/health-overrides`,
+    input
+  );
+  return data;
+}
+
+export async function revokeHealthOverride(
+  projectId: string,
+  overrideId: string
+): Promise<void> {
+  await api.delete(`/projects/${projectId}/health-overrides/${overrideId}`);
 }
 
 api.interceptors.response.use(

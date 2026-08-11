@@ -5,6 +5,7 @@ from app.models.task import Task, TaskStatus
 from app.models.site_log import DailySiteLog
 from app.models.inventory import InventoryItem, StockMovement, MovementType
 from app.models.finance import JobCost, Invoice, InvoiceStatus, ExternalSyncStatus, CostCode
+from app.models.health import HealthOverride, HealthOverrideTarget, HealthOverrideValue
 
 __all__ = [
     "User",
@@ -25,4 +26,7 @@ __all__ = [
     "InvoiceStatus",
     "ExternalSyncStatus",
     "CostCode",
+    "HealthOverride",
+    "HealthOverrideTarget",
+    "HealthOverrideValue",
 ]

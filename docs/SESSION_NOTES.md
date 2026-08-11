@@ -1,4 +1,4 @@
-# Session Notes — Phase 3 (M1 + M2 + M4 + M10 shipped; M11 planned)
+# Session Notes — Phase 3 (M1 + M2 + M4 + M10 + M3 shipped; M11 planned)
 
 **Session dates:** Aug 9–11, 2026. Branch `claude-development`.
 
@@ -8,100 +8,125 @@ session-local details needed to resume.
 ## 1. What we accomplished
 
 - Committed `d0a9e5c`/`0779e5d` (docs foundation + roadmap), then
-  `1e046ec` (**feat: implement job costing and budget tracking** — M1+M2+M4).
-- Planned Phase 3 and revised the roadmap (Aug 10) to add **M10 — Project
-  Lifecycle & Admin** and **M11 — Google Sign-In** before the rest of Phase 3.
+  `1e046ec` (**feat: implement job costing and budget tracking** — M1+M2+M4),
+  then `705cb05` (**feat: implement M10 project lifecycle & admin**).
 - **M1 — inventory integrity:** row-locked `record_movement()` (`SELECT ... FOR UPDATE`),
   ledger-reconciliation service + `GET /projects/{id}/inventory/reconciliation`.
 - **M2 — project-assignment management:** unique constraint on
   `(project_id, user_id)` + admin-only assign/unassign API + admin UI panel.
-- **M4 — job costing:** `CostCode` enum on `job_costs` (replaces the unused
-  free-text `category` column), job-cost CRUD (`GET/POST/PATCH/DELETE
-  /projects/{id}/job-costs`), derived `Project.budget_spent` (= `SUM(job_costs)`,
-  recomputed in-transaction on every mutation), admin/proc-only
-  `GET /projects/{id}/budget` roll-up, finance service (`app/services/finance.py`),
-  migration `c6d8e0f2a415`, 12 tests, `JobCostsPanel` frontend. Suite grew
-  45 → **57 passing**.
-- **M10 — Project Lifecycle & Admin (Aug 11):**
-  - Migration `d7e9f1a2b3c4` adds unique `project_code`, `created_by`,
-    `completed_at/by`, `archived_at/by`, `restored_at/by`, extends
-    `project_status` enum with `draft` + `archived` (existing values kept).
-  - `app/services/projects.py` — `generate_project_code()` (`PRJ-YYYY-####`,
-    max-seq + unique-constraint retry), thin-services pattern.
-  - `POST /projects` (admin) now auto-generates the code and creates **DRAFT**;
-    `ProjectUpdate` no longer accepts `status` or `budget_spent`.
-  - Admin-only, audit-coupled transition endpoints: `activate`
-    (DRAFT/PLANNING/ON_HOLD→ACTIVE), `complete` (ACTIVE→COMPLETED, sets 100% +
-    `completed_at/by`), `archive` (ACTIVE/COMPLETED→ARCHIVED, sets `archived_at/by`;
-    rejects DRAFT/PLANNING/ON_HOLD), `restore` (ARCHIVED→COMPLETED if it was
-    completed before archiving else ACTIVE, sets `restored_at/by`).
-  - Archive visibility: non-admins get **404** on archived projects (existence
-    does not leak); `GET /projects` excludes ARCHIVED unless admin/proc pass
-    `?include=archived`. `get_project_or_404` + `can_access_archived` in
-    `app/api/project_access.py`. `get_project_or_404` now used by every
-    project-scoped route in `api/v1/projects.py` (was ad-hoc per route).
-  - Seed gating resolved: demo users/projects load only when
-    `ICE_SEED_DEMO=true` (env-flag only, no per-row `is_demo` column).
-  - Frontend: `ProjectStatus`/`Project` types extend (`project_code`, lifecycle
-    fields, `draft`/`archived`); Command Center admin "New site" modal + "Show
-    archived" toggle; ProjectCard shows `project_code` + per-status badge tone;
-    ProjectDetail lifecycle action menu (admin, legal-from-status only) +
-    archival banner + lifecycle date rows; child panels freeze (read-only) when
-    archived.
-  - Tests: `tests/test_project_lifecycle.py` — 12 tests (transitions chain,
-    RBAC 403s, invalid-transition 400s, archive filtering, archived-404 vs
-    assigned visibility, audit rows, codegen uniqueness/seq-retry, descendants
-    + budget invariant across archive/restore). Suite **57 → 69 passing**.
-- Verified budgets stay consistent across ARCHIVE/RESTORE: `budget_spent ==
-  SUM(job_costs)` invariant holds after archive → restore round-trip.
+- **M4 — job costing:** `CostCode` enum on `job_costs`, job-cost CRUD, derived
+  `Project.budget_spent` (= `SUM(job_costs)`, recomputed in-transaction),
+  admin/proc-only `GET /projects/{id}/budget` roll-up, finance service,
+  migration `c6d8e0f2a415`, 12 tests, `JobCostsPanel` frontend.
+- **M10 — Project Lifecycle & Admin:** migration `d7e9f1a2b3c4` (unique
+  `project_code`, lifecycle columns, `draft`+`archived` enum values); admin-only
+  audited `activate`/`complete`/`archive`/`restore` endpoints; archived hidden
+  from non-admins (404) and read-only; `select_project_code` retries on the
+  unique-constraint race; seed gated behind `ICE_SEED_DEMO`; 12 tests.
+  Suite 45 → **69 passing**.
+- **M3 — Computed Project Health (Aug 11):**
+  - Health is **derived on read** from source-of-truth rows (tasks, `job_costs`
+    ledger, lifecycle status) — no health columns, no randomness (plan §3).
+  - New migration `e8f2a3c5b7e4` (down_revision `d7e9f1a2b3c4`): creates
+    `health_overrides` + `health_override_target`/`health_override_value`
+    enums with partial unique index `(project_id, applied_to)
+    WHERE revoked_at IS NULL`, and widens `audit_logs.action` varchar(20)→100
+    (the 26-char `health_override_revoked` audit action exceeds varchar(20);
+    see §3 decisions).
+  - `app/models/health.py`: `HealthOverride` + target/value enums; adds
+    `NOT_RATED` to `HealthStatus` (Python-side only — the legacy manual
+    columns' DB enums are unchanged and never store it).
+  - `app/services/health.py`: `rate_timeline` (SPI = progress vs elapsed;
+    0.95/0.85 thresholds; early band; overdue only downgrades), `rate_budget`
+    (consumption vs progress from the ledger; 5pp/15pp slips; over-budget floor;
+    ≥95% near-completion cleanup; zero-spend ≤15% GREEN else NOT_RATED),
+    `rate_safety` (always NOT_RATED), `rate_overall` (worst-of-rated + `basis`),
+    `compute_health` (lifecycle + frozen + effective-vs-computed), and
+    `load_health_contexts` (~3 batched queries for the whole roll-up).
+  - API: `GET /projects/health` roll-up (declared **before** `/projects/{id}`,
+    regression test guards this), `GET /projects/{id}/health`,
+    `GET /POST /DELETE /projects/{id}/health-overrides` — all admin-only;
+    creating an override revokes the prior unrevoked one in the same
+    transaction (+ expiry handled in the app layer — Postgres forbids `now()`
+    in partial-index predicates). Legacy health fields removed from
+    `ProjectUpdate`; response serializer is role-scoped
+    (`ProjectReadRestricted` for supervisor/client — no budget fields, M6 slice).
+  - Frontend: `HealthDot` (NOT_RATED grey + reason tooltip), `ProjectCard` +
+    `KpiStrip` take computed health + `canViewBudget`, `CommandCenter` health
+    roll-up, new `ProjectHealthPanel` (admin override form + history), Project
+    Detail budget gating by `canViewFinance`.
+  - Seed P0 fix: demo `budget_spent` now equals `SUM(job_costs)` (3 rows each);
+    `seed()` takes `(session_factory=AsyncSessionLocal, *, force=False)`.
+  - Tests: `tests/test_health.py` 42 tests (SPI edges, budget verdict matrix
+    incl. the green-always P0 regression, overall basis, lifecycle/frozen/
+    archived, override expire/revoke/audit, RBAC + budget 403s, seed ledger
+    invariant, route-shadowing regression). Suite **69 → 111 passing**.
+    Frontend `tsc -b` + `vite build` + `oxlint` clean; ruff = only the 4
+    pre-existing F401s; mypy = only the 12 pre-existing errors (none in new files).
+- Verified budgets stay consistent across ARCHIVE/RESTORE and the health
+  `budget` verdict now reads the ledger (0-cost projects show NOT_RATED, not
+  GREEN).
 
-## 2. Files changed in this session (M10 — implemented, NOT yet committed)
+## 2. Files changed in this session (M10 + M3 — NOT yet committed)
 
-Backend: `alembic/versions/d7e9f1a2b3c4_m10_project_lifecycle.py` (new),
-`app/models/project.py`, `app/schemas/project.py`, `app/api/v1/projects.py`,
-`app/api/project_access.py`, `app/services/projects.py` (new), `app/seed.py`,
-`tests/conftest.py`, `tests/test_project_lifecycle.py` (new).
-Frontend: `src/types/index.ts`, `src/lib/api.ts` (project helpers),
-`src/pages/CommandCenter.tsx`, `src/pages/ProjectDetail.tsx`,
-`src/components/ProjectCard.tsx`.
+Backend: `alembic/versions/d7e9f1a2b3c4_m10_project_lifecycle.py`,
+`alembic/versions/e8f2a3c5b7e4_m3_health_overrides.py` (new),
+`app/models/project.py`, `app/models/audit.py`, `app/models/health.py` (new),
+`app/models/__init__.py`, `app/schemas/project.py`, `app/schemas/health.py`
+(new), `app/api/v1/projects.py`, `app/api/project_access.py`,
+`app/services/projects.py` (new), `app/services/health.py` (new), `app/seed.py`,
+`tests/conftest.py`, `tests/test_project_lifecycle.py` (new),
+`tests/test_health.py` (new).
+Frontend: `src/types/index.ts`, `src/lib/api.ts`, `src/pages/CommandCenter.tsx`,
+`src/pages/ProjectDetail.tsx`, `src/components/ProjectCard.tsx`,
+`src/components/HealthDot.tsx`, `src/components/KpiStrip.tsx`,
+`src/components/ProjectHealthPanel.tsx` (new).
 Docs: `docs/CURRENT_STATE.md`, `docs/ROADMAP.md`, `docs/SESSION_NOTES.md`,
+`docs/M3 — Computed Project Health: Implementation Plan.md` (new, planning),
 `docs/M10 — Project Lifecycle & Admin: Implementation Plan.md` (new, planning).
 
-## 3. Important decisions
+## 3. Important decisions (M3, Aug 11)
 
-- M1 first (correctness bug, independent, low blast radius), then M2
-  (unlocks real RBAC), then M4 (job costing), then M10 (admin lifecycle).
-- Reconciliation is a **report-only** endpoint (admins fix drift via an ADJUSTED
-  movement), not an auto-correcting job.
-- Thin `services/` layer pattern (`finance.py`, `projects.py`) for Phase 3
-  domain logic; routes stay auth/audit plumbing.
-- **M10 decisions (Aug 11):**
-  - Lifecycle transitions are **admin-only, audited, dedicated endpoints**
-    (`activate`/`complete`/`archive`/`restore`); `PATCH /projects` refuses
-    `status`/`budget_spent` so status moves only through the state machine.
-  - **Seed gating = env flag only** (`ICE_SEED_DEMO`); no `is_demo` column —
-    the implementation-plan option (a) "env-flag only" was chosen.
-  - **Enum extended, not replaced:** `planning|active|on_hold|completed` kept,
-    `draft|archived` appended → no destructive enum change.
-  - ARCHIVED is a soft terminal state: hidden from non-admins (404, not 403),
-    read-only/frozen in UI, assignments endpoints reject writes, never DELETE.
-  - Transitions are read-modify-write **without** `SELECT ... FOR UPDATE` — noted
-    as a Known-limitation/hardening item (M1/M4 already row-lock; same fix here).
-- **M10 before M3/M5** (health + invoicing operate on a lifecycle-aware project
-  universe; only ACTIVE compute health / generate invoices).
-- **M9 before M11** (refresh rotation + revocation + deactivation cutoff must
-  exist before Google is trusted with sessions).
-- **M6 before real clients on Google** (role-scoped contract so Google-linked
-  clients never see budget fields).
+- **Computed-on-read, never stored** (plan §3 option (a)): no denormalized
+  health columns; verdicts are pure functions of committed rows + `today` +
+  overrides. The deprecated manual columns stay in the DB (compat) but are no
+  longer settable via `ProjectUpdate`, and `rate_*` never reads them.
+- **Budget from the `job_costs` ledger only** — `Project.budget_spent` is the
+  denormalized running total; the health service intentionally reads `SUM(...)`
+  from the ledger so it can detect untracked spend (zero-spend + progress
+  ⇒ NOT_RATED, not GREEN — this was a real P0: `spent==budget_spent==0` used
+  to pass the "green-always" stability rule and report healthy).
+- **Override semantics:** admin-only, audited
+  (`health_override` / `health_override_revoked`), one active override per
+  target (partial unique index), optional `expires_at`. Revoke restores the
+  computed verdict — `effective_*` vs `computed_*` is the API contract.
+- **`audit_logs.action` widened to varchar(100)** because the plan-named
+  revocation action is 26 chars; the column only ever held create/update/delete
+  before. Non-destructive length change shipped inside the M3 migration.
+- **Partial-index predicate is `WHERE revoked_at IS NULL` only** — Postgres
+  rejects volatile `now()` (STABLE) in index expressions, so expiry is enforced
+  in `compute_health` (skip expired at read) and in the create flow (revoke all
+  prior rows for the target, expired or not).
+- **Health is admin-only** at every route (write and read roll-up); supervisor/
+  client see per-project health through the role-scoped project serializer.
+- **RBAC visibility first slice (M6 prep):** supervisors/clients get
+  `ProjectReadRestricted` (no `budget`, no `budget_spent`) — a contract that M6
+  extends; the client "view-only" portal is still future work.
+- **Roll-up list order note:** `GET /projects` excludes ARCHIVED by default and
+  for non-admins; `GET /projects/health` mirrors this.
 
 ## 4. Current project state
 
 Phases 1 & 2 complete and intact; Phase 3 M1/M2/M4 committed (`1e046ec`), M10
-implemented but **uncommitted** (69/69 backend tests pass against real Postgres;
-frontend `tsc`+`vite build` and `oxlint` clean; ruff app+tests 4 pre-existing
-F401s, mypy 12 pre-existing errors — nothing new introduced).
-Migrations `a4b6c8d9e2f3` + `b5c7d9e1f203` + `c6d8e0f2a415` applied to the dev DB;
-migration `d7e9f1a2b3c4` (M10) is a new revision on HEAD, not yet applied.
+committed (`705cb05`), M3 implemented but **uncommitted** (111/111 backend tests
+pass against real Postgres; frontend `tsc`+`vite build` and `oxlint` clean; ruff
+app+tests the same 4 pre-existing F401s, mypy the same 12 pre-existing errors —
+nothing new introduced).
+Dev DB is fully migrated: `a4b6c8d9e2f3` → `b5c7d9e1f203` → `c6d8e0f2a415` →
+`d7e9f1a2b3c4` → `e8f2a3c5b7e4` (M3) all applied (verified Aug 11: `alembic_version
+= e8f2a3c5b7e4`, `health_overrides` table + partial unique index
+`uq_health_overrides_active_per_target WHERE revoked_at IS NULL`, `audit_logs.action`
+now varchar(100)).
 
 ## 5. Current phase
 
@@ -109,48 +134,61 @@ Phase 3 — "Integrity, Operable RBAC, Admin Lifecycle & the Finance Pillar".
 
 ## 6. Current milestone
 
-**M10 — Project Lifecycle & Admin** is implemented; next up is **M3 — computed
-health** (was "M5 invoicing").
+**M3 — Computed Project Health** is implemented and verified live on the dev
+environment (uncommitted); next up is **M5 — Invoicing**.
 
 ## 7. Phase 3 remaining, in execution order
 
-1. **M3 — Computed project health** (+ audited manual override) over ACTIVE only.
-2. **M5 — Invoicing** (milestone → invoice generation) gated to ACTIVE.
-3. **M6 — Client view-only scope** (no budget fields for client role).
-4. **M7 — Task date-order validation on update + dependency cycle detection.**
-5. **M8 — Idempotency keys on movement/site-log/invoice POSTs.**
-6. **M9 — Token security:** refresh rotation + server-side revocation.
-7. **M11 — Google Sign-In** (NEW): Google authenticates only; ICE owns identity/
+1. **M5 — Invoicing** (milestone → invoice generation) gated to ACTIVE.
+2. **M6 — Client view-only scope** (no budget fields for client role) — the M3
+   serializer slice is a head start.
+3. **M7 — Task date-order validation on update + dependency cycle detection.**
+4. **M8 — Idempotency keys on movement/site-log/invoice POSTs.**
+5. **M9 — Token security:** refresh rotation + server-side revocation.
+6. **M11 — Google Sign-In** (NEW): Google authenticates only; ICE owns identity/
    role/assignments/permissions; never auto-grants ADMIN; inherits M9 sessions.
    Real-user rollout gate — after Phase 4 infra.
 
 Phase 3 DB stubs still pending: unique `inventory_items (project_id, name)`,
 `daily_site_logs (project_id, log_date)`; `invoices` milestone mapping (M5);
-stock_movements/audit_logs list indexes; lifecycle-transition row lock (hardening).
-Pre-existing debt (not in Phase 3 scope to fix unilaterally): ruff 4 F401 errors,
-mypy 12 errors, no project CRUD/PATCH-RBAC test coverage beyond lifecycle, client
-reads budgets.
+stock_movements/audit_logs list indexes; lifecycle-transition row lock (the M3
+override create/revoke flow already uses one). Pre-existing debt (not in Phase 3
+scope): ruff 4 F401 errors, mypy 12 errors, client reads budgets (M6), no
+frontend tests.
 
 ## 8. Exact next action
 
-1. Apply M10 migration to the dev DB and smoke-test:
-   `docker compose up -d postgres`, `alembic upgrade head` (backend container
-   runs migrations on start), create a project via UI and walk the lifecycle.
-2. Commit the M10 work when the owner asks.
-3. Then **M3 — Computed project health** (schedule + budget + safety signals,
-   audited admin override) over ACTIVE projects only.
+1. **The running `backend` container is verified on M3 code** (deps + live reload
+   of the docker-cp'd `app/`), M3 endpoints smoke-tested live:
+   - Admin login → `GET /projects/health` roll-up (16 projects, health verdicts,
+     `effective` per dimension), `POST .../health-overrides` (201; second create
+     auto-revokes the first — single active per target holds), effective
+     `budget` masked (green → red), `DELETE` (204) restores computed verdict,
+     supervisor override → **403**, supervisor health roll-up/detail → 200
+     (health status visible, but the restricted project serializer still hides
+     dollar figures), audit trail records `health_override` +
+     `health_override_revoked`.
+2. **The committed Dockerfile got one line removed** (`# syntax=docker/dockerfile:1`)
+   because the local daemon **cannot reach Docker Hub** (`docker pull
+   docker/dockerfile:1` and base Python pulls hang → "DeadlineExceeded"); the
+   built-in BuildKit frontend works and builds from cache. The container is thus
+   running the OLD image + docker-cp'd code — ephemeral. When network to Docker
+   Hub returns, `docker compose up -d --build backend` will produce the real new
+   image (and the Dockerfile change is already in the repo).
+3. Commit the M3 work when the owner asks.
+4. Then **M5 — Invoicing** (milestone → invoice generation over ACTIVE).
 
-## 9. Ambiguities / conflicts captured from the M10+M11 requirements
+## 9. Ambiguities / conflicts captured
 
-- ~~Who transitions lifecycle vs the old `PATCH /projects` supervisor path~~ —
-  **RESOLVED (M10):** transitions are admin-only dedicated endpoints; PATCH no
-  longer accepts `status`.
-- ~~Seed data: mark demo rows vs env-flag only~~ — **RESOLVED (M10):** env-flag
-  only (`ICE_SEED_DEMO`), no schema marker.
-- ~~Status model: extend enum vs replace~~ — **RESOLVED (M10):** extended
-  (`draft`/`archived` appended; existing values intact).
-- `Project.budget_spent` remains derived (`== SUM(job_costs)`, M4 invariant);
-  lifecycle/archive must not bypass it — verified by test across archive/restore.
+- ~~Manual health PATCH vs computed health~~ — **RESOLVED (M3):** legacy
+  columns removed from `ProjectUpdate`; verdicts move only through the audited
+  `health-overrides` endpoint.
+- ~~Override identity while expired rows linger~~ — **RESOLVED (M3):** partial
+  unique index guards active rows; create revokes all prior rows for the target.
+- ~~Safety dimension~~ — **RESOLVED (M3):** always NOT_RATED until a structured
+  safety/quality data model exists; no color fabricated from free text.
+- `Project.budget_spent` remains derived (M4 invariant); health reads the
+  ledger, not the running total, so untracked spend surfaces as NOT_RATED.
 - Future POs (Phase 5) map to projects — archived projects must stay read-only
   for all historical child records (UI freezes panels; API leaves mutation
   endpoints open to admin — flag if PO-posting must be blocked on ARCHIVED).
@@ -164,8 +202,19 @@ reads budgets.
 - Test env: pinned `requirements-dev.txt` was installed into the `py310_env`
   conda env so `pytest`/`ruff`/`mypy` run there
   (`/opt/miniconda3/envs/py310_env/bin/python -m pytest tests/ -q`).
-- M10 migration not yet applied to the dev DB (revision written but `alembic
-  upgrade head` not run this session).
+- **Docker Hub unreachable from this machine** (`docker pull` hangs →
+  DeadlineExceeded; host `curl` to dockerhub/pypi works). A real backend image
+  rebuild (`docker compose up -d --build backend`) is blocked until the daemon
+  regains registry access; the container currently runs docker-cp'd code, which
+  is fine for dev verification but gets lost on stop/remove.
+- **Migration bug found live:** `op.create_table` in SQLAlchemy 2.0.35 fires an
+  unconditional, non-checkfirst `CREATE TYPE` for enum columns even with
+  `create_type=False` (non-metadata enum path `_on_table_create`), so the first
+  `alembic upgrade head` failed with `DuplicateObject` after the explicit
+  checkfirst create ran. Resolved by creating the enums explicitly and adding the
+  two enum columns via `op.add_column` (ALTER TABLE never re-creates the type).
+  Tests don't catch this (conftest uses `create_all`, not alembic) — worth a
+  migration-drift test.
 - M11 owner decisions still required (see §8/§9 in previous notes).
 - Deviating from roadmap UI guidance (replacing `alert()` with inline errors)
   applies to new components only; existing panels still use `alert()`.

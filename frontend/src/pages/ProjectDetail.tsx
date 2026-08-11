@@ -8,10 +8,10 @@ import {
   Play,
   RotateCcw,
 } from "lucide-react";
-import { api, transitionProject } from "../lib/api";
+import { api, getProjectHealth, transitionProject } from "../lib/api";
 import type { Project, ProjectStatus } from "../types";
 import { AppShell } from "../components/AppShell";
-import { HealthDot } from "../components/HealthDot";
+import { ProjectHealthPanel } from "../components/ProjectHealthPanel";
 import { ProjectTimeline } from "../components/ProjectTimeline";
 import { DailySiteLogs } from "../components/DailySiteLogs";
 import { InventoryPanel } from "../components/InventoryPanel";
@@ -82,7 +82,16 @@ export function ProjectDetail() {
     },
   });
 
+  // Deterministic, server-computed health (M3) — colors + reasons + override UI.
+  const { data: health, isLoading: healthLoading } = useQuery({
+    queryKey: ["project-health", projectId],
+    queryFn: () => getProjectHealth(projectId!),
+    enabled: Boolean(projectId),
+  });
+
   const isAdmin = user?.role === "admin";
+  const canViewFinance =
+    user?.role === "admin" || user?.role === "procurement_manager";
   const isArchived = project?.status === "archived";
 
   // Mirrors backend RBAC: admin/supervisor manage the timeline & site
@@ -190,26 +199,21 @@ export function ProjectDetail() {
             </div>
           )}
 
-          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div className="rounded-md border border-ink-border p-3">
-              <p className="mb-1.5 text-[11px] uppercase tracking-wide text-paper-muted">
-                Timeline
-              </p>
-              <HealthDot status={project.timeline_health} showLabel />
+          {healthLoading ? (
+            <div className="mt-6 flex items-center gap-2 py-6 text-paper-muted">
+              <Loader2 size={16} className="animate-spin" />
+              Computing health…
             </div>
-            <div className="rounded-md border border-ink-border p-3">
-              <p className="mb-1.5 text-[11px] uppercase tracking-wide text-paper-muted">
-                Budget
-              </p>
-              <HealthDot status={project.budget_health} showLabel />
+          ) : health ? (
+            <div className="mt-6">
+              <ProjectHealthPanel
+                projectId={project.id}
+                health={health}
+                isOverrideManager={isAdmin}
+                canWriteHealth={isAdmin && !isArchived}
+              />
             </div>
-            <div className="rounded-md border border-ink-border p-3">
-              <p className="mb-1.5 text-[11px] uppercase tracking-wide text-paper-muted">
-                Safety
-              </p>
-              <HealthDot status={project.safety_health} showLabel />
-            </div>
-          </div>
+          ) : null}
 
           <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 font-mono text-sm tabular">
             <div className="flex justify-between border-b border-ink-border py-2">
@@ -222,18 +226,22 @@ export function ProjectDetail() {
                 {formatDate(project.target_end_date)}
               </span>
             </div>
-            <div className="flex justify-between border-b border-ink-border py-2">
-              <span className="text-paper-muted">Budget total</span>
-              <span className="text-paper">
-                {formatCurrency(project.budget_total)}
-              </span>
-            </div>
-            <div className="flex justify-between border-b border-ink-border py-2">
-              <span className="text-paper-muted">Budget spent</span>
-              <span className="text-paper">
-                {formatCurrency(project.budget_spent)}
-              </span>
-            </div>
+            {canViewFinance && (
+              <>
+                <div className="flex justify-between border-b border-ink-border py-2">
+                  <span className="text-paper-muted">Budget total</span>
+                  <span className="text-paper">
+                    {formatCurrency(project.budget_total)}
+                  </span>
+                </div>
+                <div className="flex justify-between border-b border-ink-border py-2">
+                  <span className="text-paper-muted">Budget spent</span>
+                  <span className="text-paper">
+                    {formatCurrency(project.budget_spent)}
+                  </span>
+                </div>
+              </>
+            )}
             <div className="flex justify-between border-b border-ink-border py-2">
               <span className="text-paper-muted">Completed</span>
               <span className="text-paper">

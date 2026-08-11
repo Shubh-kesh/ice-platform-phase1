@@ -31,10 +31,18 @@ class ProjectStatus(str, enum.Enum):
 
 
 class HealthStatus(str, enum.Enum):
-    """Drives the color-coded indicators on the command center dashboard."""
+    """Health verdicts across the app (M3).
+
+    GREEN/AMBER/RED drive the color-coded indicators. NOT_RATED is the explicit
+    "no claim" state (grey) used when a dimension cannot be determined from the
+    captured data (e.g. Safety until a data model exists, or a project that has
+    not started). The legacy manual health columns below never store NOT_RATED —
+    it only appears in computed-health payloads.
+    """
     GREEN = "green"    # on track
     AMBER = "amber"    # at risk
     RED = "red"        # off track / blocked
+    NOT_RATED = "not_rated"  # deliberately grey: insufficient/immature data
 
 
 class Project(Base):
@@ -73,8 +81,10 @@ class Project(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
 
-    # Command-center health indicators — computed periodically by a
-    # background job in Phase 2, manually settable for now.
+    # DEPRECATED (M3): manual health colors. M3 derives health on read from
+    # source-of-truth rows (tasks, job-cost ledger, lifecycle) — these columns
+    # are retained only for a transition window, are no longer settable via
+    # PATCH, and are ignored by the health computation. See app/services/health.py.
     timeline_health: Mapped[HealthStatus] = mapped_column(
         Enum(HealthStatus, name="timeline_health"), default=HealthStatus.GREEN, nullable=False
     )
