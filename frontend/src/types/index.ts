@@ -27,6 +27,11 @@ export interface User {
   created_at: string;
 }
 
+// The API is role-scoped (M3/M6): admin/procurement get the full shape,
+// supervisors lose the money fields, and clients get the tight ProjectClientRead
+// shape — no budgets, no manual health columns, no lifecycle attribution, no
+// internal timestamps. The fields below are therefore optional in the contract;
+// components gate them behind the same role flags the backend enforces.
 export interface Project {
   id: string;
   name: string;
@@ -35,22 +40,22 @@ export interface Project {
   client_name: string;
   start_date: string;
   target_end_date: string;
-  budget_total: number;
   status: ProjectStatus;
-  timeline_health: HealthStatus;
-  budget_health: HealthStatus;
-  safety_health: HealthStatus;
-  budget_spent: number;
   percent_complete: number;
-  created_by: string | null;
   completed_at: string | null;
-  completed_by: string | null;
-  archived_at: string | null;
-  archived_by: string | null;
-  restored_at: string | null;
-  restored_by: string | null;
-  created_at: string;
-  updated_at: string;
+  budget_total?: number;
+  budget_spent?: number;
+  timeline_health?: HealthStatus;
+  budget_health?: HealthStatus;
+  safety_health?: HealthStatus;
+  created_by?: string | null;
+  completed_by?: string | null;
+  archived_at?: string | null;
+  archived_by?: string | null;
+  restored_at?: string | null;
+  restored_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface ProjectCreateInput {

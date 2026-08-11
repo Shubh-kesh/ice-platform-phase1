@@ -401,29 +401,47 @@ async def test_supervisor_client_get_no_money(
     await assign_user_to_project(test_db, test_project.id, test_supervisor_user.id)
     await assign_user_to_project(test_db, test_project.id, test_client_user.id)
 
-    for email in ("supervisor@test.com", "client@test.com"):
-        header = await auth_header(client, email)
-        listing = await client.get("/api/v1/projects", headers={"Authorization": header})
-        assert listing.status_code == 200
-        item = listing.json()[0]
-        assert "budget_total" not in item
-        assert "budget_spent" not in item
+    # Supervisor: no money on project reads, but health stays readable (M6 —
+    # health is a supervisor surface; only clients lose it).
+    sup_header = await auth_header(client, "supervisor@test.com")
+    listing = await client.get("/api/v1/projects", headers={"Authorization": sup_header})
+    assert listing.status_code == 200
+    item = listing.json()[0]
+    assert "budget_total" not in item
+    assert "budget_spent" not in item
 
-        one = await client.get(
-            f"/api/v1/projects/{test_project.id}", headers={"Authorization": header}
-        )
-        assert one.status_code == 200
-        assert "budget_total" not in one.json()
-        assert "budget_spent" not in one.json()
+    one = await client.get(
+        f"/api/v1/projects/{test_project.id}", headers={"Authorization": sup_header}
+    )
+    assert one.status_code == 200
+    assert "budget_total" not in one.json()
+    assert "budget_spent" not in one.json()
 
-        health = await client.get(
-            f"/api/v1/projects/{test_project.id}/health", headers={"Authorization": header}
-        )
-        assert health.status_code == 200
-        assert "budget_total" not in health.text
-        assert "budget_spent" not in health.text
-        # Health colors + reasons stay visible (budget colour only, no figures).
-        assert "timeline" in health.json()
+    health = await client.get(
+        f"/api/v1/projects/{test_project.id}/health", headers={"Authorization": sup_header}
+    )
+    assert health.status_code == 200
+    assert "budget_total" not in health.text
+    assert "budget_spent" not in health.text
+    # Health colors + reasons stay visible to supervisors (budget colour only).
+    assert "timeline" in health.json()
+
+    # Client (M6): project reads are no-money and health is 403 — computed
+    # health is an internal management signal, not part of the client portal.
+    client_header = await auth_header(client, "client@test.com")
+    clisting = await client.get("/api/v1/projects", headers={"Authorization": client_header})
+    assert clisting.status_code == 200
+    citem = clisting.json()[0]
+    assert "budget_total" not in citem
+    assert "budget_spent" not in citem
+    # Client project shape also drops internal attribution columns.
+    for internal in ("budget_total", "budget_spent", "created_by", "completed_by", "archived_by", "restored_by"):
+        assert internal not in citem
+
+    chealth = await client.get(
+        f"/api/v1/projects/{test_project.id}/health", headers={"Authorization": client_header}
+    )
+    assert chealth.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -455,7 +473,9 @@ async def test_client_isolated_from_other_project(
     resp = await client.get(
         f"/api/v1/projects/{test_project.id}/health", headers={"Authorization": client_header}
     )
-    assert resp.status_code == 403  # un-assigned -> forbidden, never 200/404-of-data
+    # 403 on both counts: the client is un-assigned AND (M6) health is not a
+    # client surface at all — either way, never 200 with health data.
+    assert resp.status_code == 403
 
 
 @pytest.mark.asyncio

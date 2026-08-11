@@ -60,6 +60,23 @@ def assert_project_writable(project: Project) -> None:
         raise HTTPException(status_code=403, detail="Archived projects are read-only")
 
 
+def assert_not_client(user: User) -> None:
+    """Internal management surfaces are off-limits to the CLIENT role (M6).
+
+    The CLIENT portal boundary: clients may see their assigned projects'
+    schedule, site updates and issued payment requests only. Computed health
+    (internal management signal), the inventory/procurement ledger and other
+    internal surfaces are 403 for the client role regardless of assignment —
+    the supervisor keeps the existing project-access behavior, so this guard
+    is applied per-endpoint on the surfaces clients must never reach.
+    """
+    if user.role == UserRole.CLIENT:
+        raise HTTPException(
+            status_code=403,
+            detail="Role 'client' is not permitted to view this data",
+        )
+
+
 async def assert_can_view_project(db: AsyncSession, user: User, project: Project) -> None:
     if user.role in (UserRole.ADMIN, UserRole.PROCUREMENT_MANAGER):
         return

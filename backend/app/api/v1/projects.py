@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_idempotency_guard, require_role
 from app.api.project_access import (
     assert_can_view_project,
+    assert_not_client,
     assert_project_writable,
     can_access_archived,
     get_project_for_update,
@@ -29,6 +30,7 @@ from app.schemas.health import (
 )
 from app.schemas.project import (
     AssignmentCreate,
+    ProjectClientRead,
     ProjectCreate,
     ProjectRead,
     ProjectReadRestricted,
@@ -60,19 +62,25 @@ _ASSIGNABLE_ROLES = (UserRole.SITE_SUPERVISOR, UserRole.CLIENT)
 _MONEY_ROLES = (UserRole.ADMIN, UserRole.PROCUREMENT_MANAGER)
 
 
-def _full_project_view(user_roles: UserRole) -> bool:
-    return user_roles in _MONEY_ROLES
-
-
-def _serialize_project(project: Project, full_view: bool) -> ProjectRead | ProjectReadRestricted:
-    """Role-scoped project serialization (M6 slice, landed with M3).
+def _serialize_project(
+    project: Project, user_role: UserRole
+) -> ProjectRead | ProjectReadRestricted | ProjectClientRead:
+    """Role-scoped project serialization (M3 no-money slice + M6 client shape).
 
     The health payload (`GET .../health`) is the source of truth for colors;
-    these project reads simply stop leaking money to supervisor/client.
+    these project reads simply stop leaking money/internal attribution to the
+    roles that must not see it. Clients get the tight ProjectClientRead shape
+    (M6) — no budgets, no manual health columns, no lifecycle attribution.
     """
-    if full_view:
+    if user_role == UserRole.CLIENT:
+        return ProjectClientRead.model_validate(project)
+    if full_view_roles(user_role):
         return ProjectRead.model_validate(project)
     return ProjectReadRestricted.model_validate(project)
+
+
+def full_view_roles(role: UserRole) -> bool:
+    return role in _MONEY_ROLES
 
 
 async def _select_projects(
@@ -155,7 +163,7 @@ def _health_read(
     )
 
 
-@router.get("", response_model=list[ProjectRead | ProjectReadRestricted])
+@router.get("", response_model=list[ProjectRead | ProjectReadRestricted | ProjectClientRead])
 async def list_projects(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
@@ -167,12 +175,12 @@ async def list_projects(
     projects are excluded from normal lists; admin/proc can opt back in with
     ?include_archived=true. COMPLETED projects remain visible (reporting).
 
-    Supervisor/Client responses omit budget_total/budget_spent (M6 slice) —
-    those roles see health colors via `/projects/health` instead.
+    Responses are role-scoped: admin/proc get full budget figures, supervisors
+    get the no-money shape, and clients get the tight M6 client shape (no
+    budgets, no internal health columns, no lifecycle attribution).
     """
-    full_view = _full_project_view(user.role)
     projects = await _select_projects(db, user, include_archived)
-    return [_serialize_project(p, full_view) for p in projects]
+    return [_serialize_project(p, user.role) for p in projects]
 
 
 @router.get("/health", response_model=list[ProjectHealthRead])
@@ -183,12 +191,14 @@ async def list_projects_health(
 ):
     """Command Center roll-up: computed + effective health for every visible
     project. Same visibility/archived rules as `GET /projects`. The payload
-    never carries money, so supervisors/clients can see it in full — only the
-    override history (admin/procurement) is withheld below.
+    never carries money, so supervisors can see it in full — only the override
+    history (admin/procurement) is withheld. Clients are 403 (M6: computed
+    health is an internal management signal, not part of the client portal).
 
     Declared BEFORE `GET /{project_id}` so the `health` literal is never
     shadowed by the UUID path param (regression-tested in test_health.py).
     """
+    assert_not_client(user)
     projects = await _select_projects(db, user, include_archived)
     contexts = await load_health_contexts(db, [p.id for p in projects])
     today = datetime.now(timezone.utc).date()
@@ -205,7 +215,12 @@ async def get_project_health(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
 ):
-    """Single-project health (project-scoped via shared visibility helpers)."""
+    """Single-project health (project-scoped via shared visibility helpers).
+
+    Clients are 403 (M6: computed health + its reasons/basis are internal
+    management signals — the client portal shows progress instead).
+    """
+    assert_not_client(user)
     project = await get_project_or_404(db, project_id)
     if project.status == ProjectStatus.ARCHIVED and not can_access_archived(user):
         raise HTTPException(status_code=404, detail="Project not found")
@@ -220,7 +235,7 @@ async def get_project_health(
     )
 
 
-@router.get("/{project_id}", response_model=ProjectRead | ProjectReadRestricted)
+@router.get("/{project_id}", response_model=ProjectRead | ProjectReadRestricted | ProjectClientRead)
 async def get_project(
     project_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -230,7 +245,7 @@ async def get_project(
     if project.status == ProjectStatus.ARCHIVED and not can_access_archived(user):
         raise HTTPException(status_code=404, detail="Project not found")
     await assert_can_view_project(db, user, project)
-    return _serialize_project(project, _full_project_view(user.role))
+    return _serialize_project(project, user.role)
 
 
 @router.post("", response_model=ProjectRead, status_code=status.HTTP_201_CREATED)
@@ -337,7 +352,7 @@ async def update_project(
 
     await db.commit()
     await db.refresh(project)
-    return _serialize_project(project, _full_project_view(user.role))
+    return _serialize_project(project, user.role)
 
 
 # --- Lifecycle transitions (Phase 3 M10) -----------------------------------

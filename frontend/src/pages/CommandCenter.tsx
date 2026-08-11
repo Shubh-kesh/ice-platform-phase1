@@ -41,10 +41,13 @@ export function CommandCenter() {
   });
 
   // Deterministic health is served by the API (M3); the frontend no longer
-  // derives an "overall" verdict itself.
+  // derives an "overall" verdict itself. Clients are 403 on the health
+  // endpoints (M6) so the roll-up is never fetched for them.
+  const isClient = user?.role === "client";
   const { data: healths = [] } = useQuery({
     queryKey: ["projects-health", showArchived],
     queryFn: () => getProjectsHealth(showArchived),
+    enabled: !isClient,
   });
 
   const isAdmin = user?.role === "admin";
@@ -90,15 +93,17 @@ export function CommandCenter() {
           </h1>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowArchived((v) => !v)}
-            className={`flex items-center gap-1.5 rounded border border-ink-border bg-ink px-3 py-1.5 text-xs hover:bg-ink-raised ${
-              showArchived ? "text-paper" : "text-paper-muted"
-            }`}
-          >
-            <Archive size={14} />
-            Show archived
-          </button>
+          {!isClient && (
+            <button
+              onClick={() => setShowArchived((v) => !v)}
+              className={`flex items-center gap-1.5 rounded border border-ink-border bg-ink px-3 py-1.5 text-xs hover:bg-ink-raised ${
+                showArchived ? "text-paper" : "text-paper-muted"
+              }`}
+            >
+              <Archive size={14} />
+              Show archived
+            </button>
+          )}
           {isAdmin && (
             <button
               onClick={() => setShowForm(true)}
@@ -153,6 +158,7 @@ export function CommandCenter() {
               projects={projects}
               healths={healths}
               canViewBudget={canViewBudget}
+              showHealth={!isClient}
             />
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -162,6 +168,7 @@ export function CommandCenter() {
                 project={project}
                 health={healthByProject.get(project.id)}
                 showBudget={canViewBudget}
+                showHealth={!isClient}
               />
             ))}
           </div>

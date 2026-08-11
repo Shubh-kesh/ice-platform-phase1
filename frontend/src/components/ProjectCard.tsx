@@ -49,10 +49,12 @@ export function ProjectCard({
   project,
   health,
   showBudget,
+  showHealth = true,
 }: {
   project: Project;
   health?: ProjectHealth;
   showBudget: boolean;
+  showHealth?: boolean;
 }) {
   const overall = health?.overall.effective ?? "not_rated";
 
@@ -104,47 +106,52 @@ export function ProjectCard({
       </div>
 
       {/* Health row — verdicts come from the server (M3); each dot carries its
-          first explanation sentence in the tooltip. */}
-      <div className="mb-3 flex items-center gap-4 text-[11px] text-paper-muted">
-        {DIMENSION_ROWS.map(({ key, label }) => {
-          const dim = health?.[key];
-          return (
-            <span key={key} className="flex items-center gap-1.5">
-              <HealthDot
-                status={dim?.effective ?? "not_rated"}
-                reason={dim?.reasons[0]}
-              />
-              {label}
-            </span>
-          );
-        })}
-      </div>
-
-      {/* Bottom row — role-gated money (M6 slice / M3): admin/procurement see
-          the spent/total amounts; supervisor/client see only a budget badge. */}
-      {showBudget ? (
-        <div className="flex items-baseline justify-between border-t border-ink-border pt-2 font-mono text-xs tabular">
-          <span className="text-paper-muted">
-            {formatCurrency(project.budget_spent)}
-          </span>
-          <span className="text-paper-faint">
-            / {formatCurrency(project.budget_total)}
-          </span>
-        </div>
-      ) : (
-        <div className="flex items-center justify-between border-t border-ink-border pt-2 text-[11px] text-paper-muted">
-          <span className="flex items-center gap-1.5">
-            <HealthDot
-              status={health?.budget.effective ?? "not_rated"}
-              reason={health?.budget.reasons[0]}
-            />
-            Budget
-          </span>
-          <span className="font-mono text-[10px] uppercase tracking-wide text-paper-faint">
-            colour only
-          </span>
+          first explanation sentence in the tooltip. A management surface (M6):
+          clients' cards render no health dots at all. */}
+      {showHealth && (
+        <div className="mb-3 flex items-center gap-4 text-[11px] text-paper-muted">
+          {DIMENSION_ROWS.map(({ key, label }) => {
+            const dim = health?.[key];
+            return (
+              <span key={key} className="flex items-center gap-1.5">
+                <HealthDot
+                  status={dim?.effective ?? "not_rated"}
+                  reason={dim?.reasons[0]}
+                />
+                {label}
+              </span>
+            );
+          })}
         </div>
       )}
+
+      {/* Bottom row — role-gated money (M6 slice / M3): admin/procurement see
+          the spent/total amounts; supervisor/client see only a budget badge.
+          Clients don't get the budget badge either (no health data behind it). */}
+      {showHealth &&
+        (showBudget ? (
+          <div className="flex items-baseline justify-between border-t border-ink-border pt-2 font-mono text-xs tabular">
+            <span className="text-paper-muted">
+              {formatCurrency(project.budget_spent ?? 0)}
+            </span>
+            <span className="text-paper-faint">
+              / {formatCurrency(project.budget_total ?? 0)}
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between border-t border-ink-border pt-2 text-[11px] text-paper-muted">
+            <span className="flex items-center gap-1.5">
+              <HealthDot
+                status={health?.budget.effective ?? "not_rated"}
+                reason={health?.budget.reasons[0]}
+              />
+              Budget
+            </span>
+            <span className="font-mono text-[10px] uppercase tracking-wide text-paper-faint">
+              colour only
+            </span>
+          </div>
+        ))}
     </Link>
   );
 }

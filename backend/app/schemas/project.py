@@ -67,13 +67,14 @@ class ProjectRead(ProjectBase):
 
 
 class ProjectReadRestricted(BaseModel):
-    """Supervisor/client view — the M6 minimal slice landed with M3.
+    """Site-supervisor view — the M3 no-money slice.
 
     Identical to ProjectRead except that the monetary fields
-    (budget_total/budget_spent) are omitted: clients and site supervisors
-    never receive internal budget figures through a project response. The
-    deprecated manual health colors stay (they carry no money) while the
-    frontend migrates to the dedicated health payload.
+    (budget_total/budget_spent) are omitted: supervisors never receive
+    internal budget figures through a project response. The deprecated
+    manual health colors stay (they carry no money). Supervisors do keep the
+    lifecycle attribution columns (internal to the operations team); the
+    CLIENT gets the tighter ProjectClientRead shape (M6).
     """
     model_config = ConfigDict(from_attributes=True)
 
@@ -98,3 +99,28 @@ class ProjectReadRestricted(BaseModel):
     restored_by: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
+
+
+class ProjectClientRead(BaseModel):
+    """CLIENT view — the M6 client-portal contract.
+
+    The only shape a CLIENT ever receives for a project. Deliberately
+    excludes every internal operations field: budget figures, the deprecated
+    manual health columns, lifecycle attribution (who did what), archive/
+    restore bookkeeping, and internal created/updated timestamps. A client
+    sees their project name/code, site address, schedule, status and progress
+    — nothing more. Enforced server-side (never frontend hiding); clients
+    never see ARCHIVED projects (404, M10).
+    """
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    project_code: str
+    name: str
+    site_address: str
+    client_name: str
+    start_date: date
+    target_end_date: date
+    status: ProjectStatus
+    percent_complete: int
+    completed_at: datetime | None

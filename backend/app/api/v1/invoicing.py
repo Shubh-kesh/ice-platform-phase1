@@ -393,9 +393,14 @@ async def list_invoices(
     user: Annotated[User, Depends(get_current_user)],
 ):
     """Invoices for a project. Admin/procurement get the full shape; a client
-    gets only their own project's payment requests in the restricted shape
-    (no notes/external/budget fields); supervisors get 403 — finance is not
-    a supervisor surface."""
+    gets only their own project's *issued* payment requests in the restricted
+    shape (no notes/external/budget fields); supervisors get 403 — finance is
+    not a supervisor surface.
+
+    Client visibility policy (M6): a client sees SENT, PAID and CANCELLED
+    invoices only — DRAFT invoices are internal and never exposed (filtered
+    here and 404 in `get_invoice`). OVERDUE is derived on read.
+    """
     project = await get_project_or_404(db, project_id)
     if user.role in _FINANCE_READ_ROLES:
         full_view = True
@@ -408,11 +413,10 @@ async def list_invoices(
             detail="Role 'site_supervisor' is not permitted to view invoices",
         )
 
-    result = await db.execute(
-        select(Invoice)
-        .where(Invoice.project_id == project_id)
-        .order_by(Invoice.created_at.desc())
-    )
+    stmt = select(Invoice).where(Invoice.project_id == project_id)
+    if user.role == UserRole.CLIENT:
+        stmt = stmt.where(Invoice.status != InvoiceStatus.DRAFT)
+    result = await db.execute(stmt.order_by(Invoice.created_at.desc()))
     invoices = result.scalars().all()
     if full_view:
         return [_serialize_invoice(i, project) for i in invoices]
@@ -448,6 +452,10 @@ async def get_invoice(
         raise HTTPException(status_code=404, detail="Invoice not found")
     if full_view:
         return _serialize_invoice(invoice, project)
+    # Client boundary (M6): DRAFT invoices are internal construction data —
+    # return 404 so their existence isn't leaked to the client.
+    if invoice.status == InvoiceStatus.DRAFT:
+        raise HTTPException(status_code=404, detail="Invoice not found")
     return _serialize_client_invoice(invoice, project)
 
 

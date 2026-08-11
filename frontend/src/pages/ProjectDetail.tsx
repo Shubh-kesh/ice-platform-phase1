@@ -37,7 +37,7 @@ function formatDate(value: string) {
   });
 }
 
-function formatDateOrDash(value: string | null) {
+function formatDateOrDash(value: string | null | undefined) {
   return value ? formatDate(value) : "—";
 }
 
@@ -84,18 +84,20 @@ export function ProjectDetail() {
     },
   });
 
-  // Deterministic, server-computed health (M3) — colors + reasons + override UI.
-  const { data: health, isLoading: healthLoading } = useQuery({
-    queryKey: ["project-health", projectId],
-    queryFn: () => getProjectHealth(projectId!),
-    enabled: Boolean(projectId),
-  });
-
   const isAdmin = user?.role === "admin";
   const canViewFinance =
     user?.role === "admin" || user?.role === "procurement_manager";
   const isClient = user?.role === "client";
   const isArchived = project?.status === "archived";
+
+  // Deterministic, server-computed health (M3) — colors + reasons + override UI.
+  // Clients are 403 on the health endpoints (M6: computed health is an internal
+  // management signal) so the query is never fired for them.
+  const { data: health, isLoading: healthLoading } = useQuery({
+    queryKey: ["project-health", projectId],
+    queryFn: () => getProjectHealth(projectId!),
+    enabled: Boolean(projectId) && !isClient,
+  });
 
   // Mirrors backend RBAC: admin/supervisor manage the timeline & site
   // logs, admin/procurement manage inventory. The API enforces this
@@ -202,12 +204,12 @@ export function ProjectDetail() {
             </div>
           )}
 
-          {healthLoading ? (
+          {!isClient && healthLoading ? (
             <div className="mt-6 flex items-center gap-2 py-6 text-paper-muted">
               <Loader2 size={16} className="animate-spin" />
               Computing health…
             </div>
-          ) : health ? (
+          ) : !isClient && health ? (
             <div className="mt-6">
               <ProjectHealthPanel
                 projectId={project.id}
@@ -234,13 +236,13 @@ export function ProjectDetail() {
                 <div className="flex justify-between border-b border-ink-border py-2">
                   <span className="text-paper-muted">Budget total</span>
                   <span className="text-paper">
-                    {formatCurrency(project.budget_total)}
+                    {formatCurrency(project.budget_total ?? 0)}
                   </span>
                 </div>
                 <div className="flex justify-between border-b border-ink-border py-2">
                   <span className="text-paper-muted">Budget spent</span>
                   <span className="text-paper">
-                    {formatCurrency(project.budget_spent)}
+                    {formatCurrency(project.budget_spent ?? 0)}
                   </span>
                 </div>
               </>
@@ -251,12 +253,14 @@ export function ProjectDetail() {
                 {formatDateOrDash(project.completed_at)}
               </span>
             </div>
-            <div className="flex justify-between border-b border-ink-border py-2">
-              <span className="text-paper-muted">Archived</span>
-              <span className="text-paper">
-                {formatDateOrDash(project.archived_at)}
-              </span>
-            </div>
+            {!isClient && (
+              <div className="flex justify-between border-b border-ink-border py-2">
+                <span className="text-paper-muted">Archived</span>
+                <span className="text-paper">
+                  {formatDateOrDash(project.archived_at)}
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="mt-6 space-y-4">
@@ -267,13 +271,15 @@ export function ProjectDetail() {
               canWrite={canWriteTimeline}
             />
             <DailySiteLogs projectId={project.id} canWrite={canWriteTimeline} />
-            <InventoryPanel projectId={project.id} canWrite={canWriteInventory} />
+            {!isClient && (
+              <InventoryPanel projectId={project.id} canWrite={canWriteInventory} />
+            )}
             {canWriteFinance && <JobCostsPanel projectId={project.id} canWrite={canWriteFinance} />}
             {canViewFinance && (
               <InvoicingPanel
                 projectId={project.id}
                 canWrite={canWriteFinance}
-                contractTotal={project.budget_total}
+                contractTotal={project.budget_total ?? 0}
               />
             )}
             {isClient && <ClientInvoicesPanel projectId={project.id} />}

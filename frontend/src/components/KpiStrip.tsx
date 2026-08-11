@@ -4,10 +4,12 @@ export function KpiStrip({
   projects,
   healths,
   canViewBudget,
+  showHealth = true,
 }: {
   projects: Project[];
   healths: ProjectHealth[];
   canViewBudget: boolean;
+  showHealth?: boolean;
 }) {
   const counts = { green: 0, amber: 0, red: 0, not_rated: 0 };
   for (const h of healths) {
@@ -16,21 +18,24 @@ export function KpiStrip({
 
   const items: { label: string; value: number | string; accent: string }[] = [
     { label: "Total sites", value: projects.length, accent: "text-paper" },
-    { label: "On track", value: counts.green, accent: "text-status-green" },
-    { label: "At risk", value: counts.amber, accent: "text-status-amber" },
-    { label: "Off track", value: counts.red, accent: "text-status-red" },
-    {
-      label: "Not rated",
-      value: counts.not_rated,
-      accent: "text-paper-faint",
-    },
   ];
+
+  // Health verdicts are a management surface (M6): clients' roll-up omits the
+  // on-track/at-risk/off-track counts entirely.
+  if (showHealth) {
+    items.push(
+      { label: "On track", value: counts.green, accent: "text-status-green" },
+      { label: "At risk", value: counts.amber, accent: "text-status-amber" },
+      { label: "Off track", value: counts.red, accent: "text-status-red" },
+      { label: "Not rated", value: counts.not_rated, accent: "text-paper-faint" },
+    );
+  }
 
   // Monetary roll-ups are admin/procurement only (M6 slice / M3) — supervisor
   // and client responses carry no budget figures at all.
   if (canViewBudget) {
-    const totalBudget = projects.reduce((sum, p) => sum + p.budget_total, 0);
-    const totalSpent = projects.reduce((sum, p) => sum + p.budget_spent, 0);
+    const totalBudget = projects.reduce((sum, p) => sum + (p.budget_total ?? 0), 0);
+    const totalSpent = projects.reduce((sum, p) => sum + (p.budget_spent ?? 0), 0);
     items.push({
       label: "Portfolio spend",
       value:

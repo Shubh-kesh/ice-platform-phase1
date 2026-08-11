@@ -22,7 +22,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_idempotency_guard, require_role
-from app.api.project_access import assert_project_writable, assert_can_view_project, get_project_or_404
+from app.api.project_access import (
+    assert_not_client,
+    assert_project_writable,
+    assert_can_view_project,
+    get_project_or_404,
+)
 from app.core.database import get_db
 from app.middleware.audit import record_audit
 from app.models.inventory import InventoryItem, MovementType, StockMovement
@@ -50,6 +55,10 @@ async def list_inventory_items(
     user: Annotated[User, Depends(get_current_user)],
 ):
     project = await get_project_or_404(db, project_id)
+    # Inventory/procurement data is off-limits to clients (M6) — item unit
+    # costs and stock levels are internal. Supervisors keep the existing
+    # assigned-project read access (assert_can_view_project below).
+    assert_not_client(user)
     await assert_can_view_project(db, user, project)
 
     result = await db.execute(
@@ -204,6 +213,8 @@ async def list_movements(
     user: Annotated[User, Depends(get_current_user)],
 ):
     project = await get_project_or_404(db, project_id)
+    # Stock-movement ledger is procurement data — clients get 403 (M6).
+    assert_not_client(user)
     await assert_can_view_project(db, user, project)
     await _get_item_or_404(db, project_id, item_id)
 
