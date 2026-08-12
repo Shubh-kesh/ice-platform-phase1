@@ -288,7 +288,63 @@ reject-unknown-email default, not a defect.
 - `tet` is an unrelated deleted/untracked-worktree artifact and was not
   modified as part of M11.
 
-## 18. Final verdict: SAFE TO COMMIT
+## 18. Real Google OAuth smoke-test results
+
+Environment: Docker backend from a clean `--no-cache` image, Docker Postgres
+(`ice_db`) at migration head `i7d8e9f0a1b2`, real Google OAuth client
+ID/secret injected via Compose environment, redirect URI
+`http://localhost:5173/google/callback`, Vite dev server on `localhost:5173`,
+browser Google consent completed.
+
+| Check | Result |
+|---|---|
+| `GET /auth/google/authorize` | 200 — returned consent URL, HMAC state, nonce, PKCE verifier |
+| Redirect to Google | succeeded (browser navigated to `accounts.google.com`, consent completed) |
+| Callback landing | returned to `http://localhost:5173/google/callback` |
+| `POST /auth/google/callback` | reached user resolution (no 401) |
+| Token exchange | `POST https://oauth2.googleapis.com/token` → 200, `id_token` present |
+| JWKS | `GET https://www.googleapis.com/oauth2/v3/certs` → 200, 4 RSA keys parsed |
+| ID-token verification | signature / iss / aud / exp / iat / nbf / nonce / `email_verified` / hd all passed (confirmed by stage logs) |
+| ICE access/refresh tokens issued | **No — correctly.** The Google account's email had no matching ICE user, so the documented §7/C reject (403 "No ICE account found") fired; no session was minted for an unknown account |
+| Resulting user/session behavior | not exercised live (no session issued); covered by automated M9/M11 tests |
+| Refresh rotation after Google login | verified by automated tests (rotation, old-token rejection) |
+| Logout/revocation after Google login | verified by automated tests (family revocation, refresh 401) |
+| Deactivated-user cutoff | verified by automated tests (403 on callback, refresh cutoff) |
+| Secrets/tokens in logs | none — no codes, ID tokens, refresh tokens, or client secret logged |
+| Smoke-test limitation | end-to-end login was not completed because the test Google account was not provisioned in ICE; the full OAuth/verification pipeline and the expected unknown-email rejection were verified |
+
+## 19. Security final review
+
+Checklist — all items pass:
+
+- No raw Google access/refresh tokens stored (exchange response never persisted).
+- No raw ID tokens stored (verified in memory only).
+- No authorization codes logged.
+- State: HMAC-authenticated, freshness window enforced, SPA sessionStorage match.
+- Nonce: embedded in the state payload, compared against the ID-token nonce.
+- PKCE: S256 challenge at authorize, verifier at callback, Google verifies.
+- Issuer: only `accounts.google.com` / `https://accounts.google.com`.
+- Audience: must equal `GOOGLE_CLIENT_ID`.
+- Temporal claims: exp/iat/nbf enforced.
+- Verified-email enforcement: `email_verified == true` required to link or log in.
+- `google_sub` uniqueness: unique DB index, one ICE account per Google identity.
+- Duplicate-link race: unique-index `IntegrityError` → 409 + `link_conflict`.
+- No automatic role assignment: Google never supplies a role.
+- No public account creation: unknown emails rejected.
+- Deactivated-user protection: 403 before session issuance + M9 refresh cutoff.
+- M9 refresh rotation/revocation inherited; no parallel session layer.
+- Logout revokes the session family server-side.
+- Refresh-token storage limitation: `localStorage` (documented M9 XSS surface;
+  access token stays memory-only).
+- Rate limiting: Google authorize/callback 10/min/IP; login/refresh/logout
+  limits unchanged.
+- Sensitive-data leakage: no codes/tokens/secrets in logs, audits, or responses.
+- Session fixation: sessions issued only after full verification; no pre-session
+  binding.
+- Predictable identifiers: state/nonce/verifier from `secrets.token_urlsafe`;
+  refresh tokens opaque random.
+
+## 20. Final verdict: SAFE TO COMMIT
 
 Both real callback defects are fixed and regression-tested:
 

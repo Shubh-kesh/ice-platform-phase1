@@ -39,6 +39,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    env_file:
+      - ./backend/.env
     environment:
       ENVIRONMENT: local
       SECRET_KEY: local-dev-secret-change-in-production
@@ -49,6 +51,10 @@ services:
       POSTGRES_DB: ice_db
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:5173/google/callback}
+      GOOGLE_HOSTED_DOMAIN: ${GOOGLE_HOSTED_DOMAIN:-}
       BACKEND_CORS_ORIGINS: '["http://localhost:5173"]'
       PORT: 8080
     ports:

@@ -396,7 +396,9 @@ object storage remain scaffolding:
 - **Redis:** service provisioned; no integration code uses it.
 - **Google OAuth:** authorization-code exchange and ID-token verification are
   implemented in `app/services/google_auth.py`; Google access/refresh tokens are
-  not stored. A configured provider/client smoke test remains pending.
+  not stored. A real Google smoke test verified the flow through user
+  resolution (consent → code exchange → JWKS → signature/iss/aud/temporal/
+  nonce/email/hd); an unprovisioned email correctly returns the documented 403.
 
 ```mermaid
 flowchart LR

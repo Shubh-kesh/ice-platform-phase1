@@ -305,10 +305,11 @@ sessions from the smoke). Working tree clean except pre-existing untracked `tet`
 
 ## 12. M11 — Google Sign-In & User Onboarding (Aug 12, 2026)
 
-M11 implementation is complete and uncommitted. The saved M11 plan's defaults
-were used: silent verified-email linking with full audit, reject unknown Google
-emails, distinct activation/deactivation audit actions, and an admin Users panel
-in Command Center.
+M11 implementation is complete and committed as `4be655f`
+(`feat: add Google Sign-In and user onboarding (M11)`). The saved M11 plan's
+defaults were used: silent verified-email linking with full audit, reject
+unknown Google emails, distinct activation/deactivation audit actions, and an
+admin Users panel in Command Center.
 
 - **OAuth flow:** public `GET /auth/google/authorize` returns an authorization
   URL, HMAC-authenticated stateless state, nonce, and S256 PKCE verifier. Public
@@ -334,7 +335,7 @@ in Command Center.
   unique index and adds `google_email`. Downgrade intentionally fails if
   Google-only rows with NULL passwords remain.
 - **Verification:** `pytest tests/ -q` = **213 passed**; the M11 file contains
-  18 focused tests. Frontend build passed. Frontend lint has only the existing
+  20 focused tests. Frontend build passed. Frontend lint has only the existing
   `auth-context.tsx` Fast Refresh warning. Ruff retains 2 pre-existing errors;
   mypy retains 10 pre-existing errors. `git diff --check` passed.
 - **Environment note:** Docker was unavailable during the original
@@ -358,9 +359,10 @@ in Command Center.
 
 - **Re-review status:** focused M11/M9/users/migration tests = **52 passed**;
   full suite = **213 passed**. Docker rebuild/startup/health/import checks pass.
-  Real configured Google OAuth smoke remains pending. Admin self/last-admin
-  lockout remains unguarded, and the Google callback uses synchronous httpx
-  calls inside async handlers as a performance/availability concern.
+  Real Google OAuth smoke is verified through user resolution (see §13). Admin
+  self/last-admin lockout remains unguarded, and the Google callback uses
+  synchronous httpx calls inside async handlers as a performance/availability
+  concern.
 
 - **Callback failure diagnosis:** token exchange returned 200 and JWKS HTTP
   returned 200, but Google JWKS supplied RSA `n/e` JWKs without `x5c`. The old
@@ -381,3 +383,30 @@ in Command Center.
   reached user resolution. An email with no matching ICE user returned the
   expected §7/C 403 ("No ICE account found"), confirming the flow works end to
   end; provisioning a matching account completes login.
+
+## 13. M11 final state (Aug 12, 2026)
+
+- **Committed:** `4be655f` — `feat: add Google Sign-In and user onboarding
+  (M11)`. Migration head `i7d8e9f0a1b2`; dev DB migrated and verified.
+- **Real Google OAuth smoke:** authorize 200 → Google consent → callback →
+  code exchange 200 → JWKS 200 (4 RSA keys) → signature/iss/aud/temporal/nonce/
+  `email_verified`/hd all passed → user resolution. No session was issued
+  because the test Google account was not provisioned in ICE; the documented
+  §7/C 403 was returned. No secrets/tokens/codes were logged.
+- **Two real-flow defects found during the smoke and fixed with regression
+  tests:** JWKS RSA `n/e` parsing (was `x5c`-only) and python-jose default
+  `at_hash` verification (Google ID tokens carry `at_hash`; we never use the
+  access token, so `verify_at_hash` is off to match
+  `google.oauth2.id_token.verify_oauth2_token`).
+- **Tests:** focused M11/M9/users/migration = 52 passed; full suite = 213
+  passed. Frontend build clean; lint = 1 pre-existing warning; ruff/mypy
+  unchanged baseline.
+- **Remaining non-blocking:** provision an ICE account for a Google email to
+  complete a live login; synchronous `httpx` in async handlers; unguarded admin
+  self/last-admin lockout; refresh token in `localStorage` (M9-deferred
+  httpOnly cookie).
+- **Next milestone / recommended action:** **Phase 4 — Operational Control &
+  Production Readiness** (CI/CD + ruff/mypy/tsc/test gates, IaC + managed
+  Postgres, secrets management, structured logging, backups, Redis-backed
+  rate limiting). M11 is the real-user rollout gate; Phase 4 rails must land
+  before real clients use Google Sign-In.
