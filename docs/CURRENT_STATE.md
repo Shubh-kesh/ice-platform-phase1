@@ -2,7 +2,7 @@
 
 **Document:** Actual implementation state of the ICE platform today
 **Date:** August 11, 2026
-**Basis:** Source-code inspection + verified runs (69 backend tests pass, live DB inspected)
+**Basis:** Source-code inspection + verified runs (193 backend tests pass, live DB inspected)
 **Warning:** This document describes what EXISTS today, not the product vision. The roadmap is in `docs/PRODUCT_REQUIREMENTS.md`; the current reality is here.
 
 ---
@@ -26,8 +26,8 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 ```
 
 - **Frontend:** React 19 + Vite + TanStack Query + react-router-dom + axios + Tailwind. 3 routes: `/login`, `/` (Command Center), `/projects/:projectId`.
-- **Backend:** FastAPI, async SQLAlchemy ORM, Alembic migrations, bcrypt + JWT, slowapi rate limiting. All business logic lives inside `api/v1/*` route files.
-- **Database:** PostgreSQL 16, 12 tables, 3 applied migrations.
+- **Backend:** FastAPI, async SQLAlchemy ORM, Alembic migrations, bcrypt + JWT + opaque hashed refresh sessions, slowapi rate limiting. All business logic lives inside `api/v1/*` route files.
+- **Database:** PostgreSQL 16, 13 tables, 4 applied migrations.
 - **Deployment:** Docker + docker-compose (local dev). Multi-stage non-root Dockerfile, 4 gunicorn workers, healthcheck, migrations run on container start.
 - **Redis:** provisioned in compose, configured in settings, **never used by any code**.
 - **Not present:** separate services layer, repositories, queues/workers, caching, file storage, notifications, external integrations, monitoring, CI/CD, IaC.
@@ -36,7 +36,7 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 
 | Module | Backend | Frontend | Notes |
 |---|---|---|---|
-| Authentication | `api/v1/auth.py`, `core/security.py`, `core/rate_limit.py` | `lib/auth-context.tsx`, `lib/api.ts`, `pages/Login.tsx` | JWT access (30m) + refresh (7d); bcrypt; login rate-limited 5/min |
+| Authentication | `api/v1/auth.py`, `core/security.py`, `core/rate_limit.py`, `models/refresh_session.py`, `services/auth_tokens.py`, migration `h6c7d8e9f0a1` | `lib/auth-context.tsx`, `lib/api.ts`, `pages/Login.tsx` | Access JWT (30m) + opaque refresh tokens (7d, SHA-256 hashed server-side); rotation + server-side revocation + deactivated-user cutoff + auth-event auditing (Phase 3 M9); bcrypt; login 5/min, refresh 10/min, logout 10/min |
 | Users (admin CRUD) | `api/v1/users.py` | — | Admin-only; password policy 8 chars + 1 uppercase + 1 digit |
 | Projects + health | `api/v1/projects.py`, `models/project.py`, `services/projects.py` | `CommandCenter.tsx`, `ProjectCard.tsx`, `KpiStrip.tsx`, `HealthDot.tsx`, `ProjectDetail.tsx`, `ProjectAssignments.tsx` | project lifecycle state machine (Phase 3 M10); health overrides + role-scoped serialization (Phase 3 M3) |
 | Computed health | `models/health.py`, `models/project.py`, `services/health.py`, `schemas/health.py`, `api/v1/projects.py`, migration `e8f2a3c5b7e4` | `HealthDot.tsx`, `ProjectCard.tsx`, `KpiStrip.tsx`, `CommandCenter.tsx`, `ProjectHealthPanel.tsx` | Timeline (SPI) + Budget (consumption vs progress, from job-cost ledger) + Safety (always NOT_RATED) + Overall (worst-of-rated); audited admin-only override (Phase 3 M3) |
@@ -51,9 +51,9 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 
 ## 3. Phase 1 completed functionality
 
-- Email/password login, token refresh, `/auth/me`.
-- JWT access + refresh tokens; bcrypt password hashing.
-- Rate limiting on login (5/min) and refresh (10/min) per process.
+- Email/password login, **rotating** token refresh, **server-side logout**, `/auth/me`.
+- JWT access token (30 min, stateless, in memory) + **opaque refresh tokens** (7 days, rotated on every use, only their SHA-256 digest stored server-side).
+- Rate limiting on login (5/min), refresh (10/min), logout (10/min) per process.
 - Password policy enforced at user creation (min 8 chars, 1 uppercase, 1 digit).
 - Four roles: admin, site_supervisor, procurement_manager, client.
 - RBAC: admin-only for user/project mutations; supervisors/clients scoped to assigned projects via `project_assignments`.
@@ -120,6 +120,7 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
   - **Frontend:** the SPA is client-aware — `CommandCenter` skips the health roll-up for clients (no 403 noise), hides the "Show archived" toggle, and renders a site-count-only `KpiStrip` (`showHealth` flag); `ProjectCard` drops the health-dot row and budget badge for clients; `ProjectDetail` never fires the health query for clients and hides the health panel, `InventoryPanel` and the archived-attribution row, keeping timeline + daily logs + `ClientInvoicesPanel`. `Project` fields the client shape omits are now optional in `frontend/src/types/index.ts`, with `?? 0` guards where money rows render for admin/proc.
   - **Testing (P3 M6):** `tests/test_client_portal.py` — 7 tests pinning the tight client project shape on list+detail, own-projects-only listing, health 403 (roll-up + single), inventory 403 (items + movements), DRAFT-invoice hidden/404 → SENT visible in the restricted shape, unassigned-project invoice 403, and read-only writes (task/milestone/inventory 403). `test_health.py` updated: supervisors keep health, clients now assert 403. Full suite **157 → 164 passing**.
 - **Task validation (P3 M7):** the two task write-path gaps are closed in `app/services/tasks.py` (thin-service, same pattern as finance/health/invoicing). **Date-order** is enforced on PATCH as well as create — `TaskUpdate` rejects both-dates-set inversions at the schema boundary (422) and the service validates the merged dates after partial updates, so `end_date` can never precede `start_date`. **Dependency integrity** on PATCH: `depends_on_id` must reference an existing task in the same project, must not be the task itself, and — via an iterative, task-count-bounded walk — must not close a dependency cycle (`A -> B -> A` rejected 400). Task create/update/delete now take the **project row lock** (`get_project_for_update`, the M1/M4/M5/M10 pattern) so concurrent writes serialize and a cycle can never be committed by racing opposing links. Validations run against the effective merged state *before* the ORM object is mutated (a failed request can't leave a half-applied change on the shared session), and audit values are serialized (UUIDs/dates → str) so `audit_logs.changes` JSONB stays clean. No migration, no schema change, no frontend change (the timeline never sends `depends_on_id`); `POST /tasks` idempotency remains deferred per M8. `test_tasks.py` grew 7 → 13 tests (full + partial date-order on PATCH, dependency integrity incl. cross-project/self/missing, link + clear, 2- and 3-node cycle rejection, cycle-broken-by-delete then allowed, and a true concurrent opposing-link race asserting exactly one of the two links commits).
+- **Token security (P3 M9):** the auth layer now has real refresh-token lifecycle. `/auth/login` still returns the same `{access_token, refresh_token, token_type}` shape, but the refresh token is now an **opaque random secret** (`secrets.token_urlsafe(48)`) — only its **SHA-256 digest** is stored, in a new `refresh_sessions` table (migration `h6c7d8e9f0a1`). Every `/auth/refresh` **rotates**: the presented token's row is locked (`SELECT ... FOR UPDATE`), marked revoked (`rotated`), and a child row is inserted in the same `family_id` with a `parent_id` link to the token it replaced — so a refresh token can never be used twice. Reuse of a dead token is the **theft signal**: within a short grace window (`REFRESH_TOKEN_REUSE_GRACE_SECONDS`, default 10s) it is treated as a benign two-tab race and only rejected; past the window it **revokes the whole rotation family**, killing any newer tokens the victim relies on. `POST /auth/logout` (new, rate-limited 10/min, always 204) revokes the session family server-side. **Deactivated users are cut off at refresh time** — `PATCH /users` flipping `is_active` False revokes every outstanding session (`user_deactivated`, same transaction), and refresh independently re-checks `is_active` from the DB, so a deactivated account can't ride a token to expiry; reactivation requires a fresh login. Login/refresh/logout + reuse-detection are **audited** (`table_name='auth'`, action `login`/`refresh`/`logout`/`refresh_reuse_detected`/`refresh_rejected_deactivated`) in the same transaction as the session change, **with `ip_address` populated**. Access tokens are untouched (still stateless HS256 JWTs, no JTI). httpOnly-cookie transport was **deliberately deferred** (dev is cross-origin `:5173` → `:8000`; SameSite=None needs HTTPS) — refresh stays JSON-body in `localStorage`, now with rotation + revocation mitigating the exposure. Frontend: `logout` now calls the server (best-effort) before clearing state; automatic single-flight refresh continues unchanged. `test_auth_sessions.py` adds **23 tests** incl. two real-connection concurrency races (same-token refresh → exactly one 200; old-token reuse; refresh-vs-logout determinism).
 
 ## 5. Partially implemented functionality
 
@@ -127,7 +128,7 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 - **Health indicators:** Timeline and Budget are now **computed** on read (Phase 3 M3) from real schedule + job-cost data, with an audited admin-only override; the legacy manual `timeline_health`/`budget_health`/`safety_health` columns are deprecated and no longer settable via `ProjectUpdate`. Safety stays NOT_RATED until a structured safety/quality data model exists.
 - **Low-stock alerts:** UI flags `quantity_on_hand <= reorder_threshold` only; there is no 7-day scheduled-demand calculation and no alerting mechanism.
 - **Daily site logs:** text fields fully work; the mandatory "5 photos + voice-to-text" capture does not — `photo_urls` is always an empty list.
-- **Audit trail:** covers CRUD on users/projects/tasks/logs/inventory but not login/refresh events; `ip_address` is never populated.
+- **Audit trail:** covers CRUD on users/projects/tasks/logs/inventory **and auth events** (login/refresh/logout/reuse-detection, Phase 3 M9). `ip_address` is now populated for auth events (`table_name='auth'`) but still NULL for business mutations.
 - **Client experience:** the Client role can log in and view only their assigned projects (tight `ProjectClientRead` shape — no budgets, no health, no lifecycle attribution), their schedule/timeline, daily site logs, and issued payment requests (P3 M5 restricted shape; DRAFT invoices hidden). Computed health, the inventory/procurement ledger and all write endpoints are 403 — but this is not yet the PRD's full view-only photo portal.
 - **Finance:** job-costing and milestone invoicing both exist (P3 M4 + M5, see §4b); only external-accounting sync remains (blocked on a provider/OAuth decision, per repo notes).
 
@@ -137,10 +138,10 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 - **Task `PATCH` skips date-order validation:** create validates `end_date >= start_date`; update does not — a malformed task (end before start) can be saved via `PATCH`. (`schemas/task.py`)
 - **Task dependency cycles allowed:** `depends_on_id` can be set to form a self-reference or cycle; not checked on create or update.
 - **Duplicate-ish data allowed — partially RESOLVED:** duplicate `project_assignments` rows are now impossible (unique constraint + API returns 409, Phase 3 M2); duplicate inventory item names per project, and multiple daily site logs per day, still have no uniqueness constraints.
-- **`uuid.UUID(user_id)` can raise `ValueError` -> 500** in `deps.py:45` and `auth.py:55` when a token carries a non-UUID subject (low exploitability, tokens are signed).
+- **`uuid.UUID(user_id)` can raise `ValueError` -> 500** in `deps.py:45` when an access token carries a non-UUID subject (low exploitability, tokens are signed). The old `auth.py:55` refresh-path instance is gone — refresh no longer parses `sub` from a JWT (M9).
 - **Concurrent lifecycle transitions can race — RESOLVED (Phase 3 M10 hardening):** `activate`/`complete`/`archive`/`restore` now take a `SELECT ... FOR UPDATE` row lock on the project (via `get_project_for_update`) in the same transaction as the transition, so two simultaneous transitions serialize on the project row and only one passes the status guard per committed state.
 - **Backend lint/type failures:** `ruff check app tests` reports 4 unused-import (F401) errors (all pre-existing files, untouched); `mypy app` reports 10 errors (broken `Mapped["Project"]` forward references in `inventory.py`/`site_log.py`/`task.py`, config args, jose/passlib stubs — the same pattern in `models/finance.py` was fixed by importing `Project` during M5).
-- **`ip_address` on audit entries is always NULL** — the parameter exists but is never passed.
+- **`ip_address` on audit entries is NULL for business mutations** — auth events now populate it (`table_name='auth'`, Phase 3 M9); the parameter exists for every mutation but only auth passes it so far.
 
 ## 7. Technical debt
 
@@ -154,11 +155,11 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 
 ## 8. Security concerns
 
-1. **Refresh token stored in `localStorage`** (`frontend/src/lib/api.ts`) — any XSS payload can exfiltrate the long-lived token. The access token is correctly kept in memory.
-2. **Refresh tokens are un-rotated and have no server-side revocation:** `/auth/refresh` issues a fresh pair indefinitely; logout is purely client-side; deactivated users are only cut off on the next token validation.
+1. **Refresh token stored in `localStorage`** (`frontend/src/lib/api.ts`) — any XSS payload can exfiltrate the long-lived token. The access token is correctly kept in memory. M9 mitigates the *value* of a stolen refresh token (rotation + server-side revocation + family revocation on reuse) but does not remove the storage surface — httpOnly-cookie transport was deliberately deferred (dev is cross-origin; SameSite=None requires HTTPS).
+2. **Refresh tokens are now rotated and server-side revocable — RESOLVED (Phase 3 M9):** every refresh issues a new opaque token (SHA-256 hashed, stored in `refresh_sessions`) and invalidates the old one; logout revokes the family server-side; reuse past a 10s grace window revokes the whole family; deactivated users are cut off at refresh time (sessions revoked on deactivation + live `is_active` check).
 3. **Rate limiting is in-memory and per-process:** with 4 gunicorn workers the effective login limit is ~4x; and `get_remote_address` uses `request.client.host`, so behind a reverse proxy every user shares one IP value, letting a global limit be exhausted or bypassed.
 4. **Client role can read project budgets** via the standard project response when assigned.
-5. **No audit** of login/refresh events remains; project assignments are now audited (`assign`/`unassign`, Phase 3 M2).
+5. **Auth events are now audited — RESOLVED (Phase 3 M9):** login/refresh/logout (+ reuse-detection, deactivated-rejection) record `audit_logs` rows with actor + IP. Project assignments were audited in Phase 3 M2.
 6. **Audit immutability by convention only:** nothing at the DB level prevents UPDATE/DELETE of `audit_logs` rows.
 7. **Password policy is minimal:** 8 chars + 1 uppercase + 1 digit; no maximum length (bcrypt truncates at 72 bytes).
 8. **Compose/demo config:** `docker-compose.yml` hardcodes `SECRET_KEY: local-dev-secret-change-in-production`; `seed.py` ships known demo credentials. `.env` files are correctly gitignored.
@@ -200,7 +201,7 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 
 - **No project-assignment management API — RESOLVED (Phase 3 M2):** admins now assign/unassign supervisors and clients per project via `GET/POST/DELETE /projects/{id}/assignments` (admin-only, audited, unique-constrained). Users can be onboarded to sites through the system, making per-project RBAC operational rather than demo-only.
 - **Project Lifecycle & Admin — IMPLEMENTED (Phase 3 M10):** `project_code` auto-generation (`PRJ-YYYY-####`), the DRAFT→ACTIVE→COMPLETED→ARCHIVED lifecycle with `restore`, lifecycle actor/timestamps + auditing, archive visibility (non-admins get 404 on archived projects), demo-seed gating (`ICE_SEED_DEMO`), read-only enforcement for ARCHIVED across every write path, row-locked transitions/restore, and retry-on-collision project-code generation are all in (§4b). No DELETE endpoint exists for any state (by design — nothing is hard-deletable, soft-lifecycle only).
-- **Google Sign-In — PLANNED (Phase 3 M11):** only email/password auth exists; no OAuth2/OIDC provider, no `google_sub`/account linking, no admin invitation without a preset password (user creation requires a password today), no server-side session/revocation infrastructure (see Security concerns), and no audit of auth events. Google will authenticate **only** — ICE retains identity, role, assignments, and permissions.
+- **Google Sign-In — PLANNED (Phase 3 M11):** only email/password auth exists; no OAuth2/OIDC provider, no `google_sub`/account linking, no admin invitation without a preset password (user creation requires a password today). The server-side session infrastructure M11 inherits is now in place (Phase 3 M9): rotating, revocable, deactivation-cutoff refresh sessions + auth-event audit. Google will authenticate **only** — ICE retains identity, role, assignments, and permissions.
 - **Finance**: job-costing and milestone invoicing are implemented (P3 M4 + M5, see §4b); **external-accounting sync** (QuickBooks/Xero) is not — the `external_ref`/`external_sync_status` columns are placeholders, blocked on a provider/OAuth decision per repo notes.
 - **No file uploads or voice capture** in daily site logs.
 - **No offline-first / mobile-first experience:** it is a desktop web SPA; sidebar does not collapse; no PWA/service worker.
@@ -223,7 +224,8 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 - **Append-only records by convention:** `audit_logs` and `daily_site_logs` have no update/delete endpoints; `record_audit()` is explicit and transactional (committed atomically with the mutation) rather than ORM event hooks.
 - **Idempotency via a transactional claim ledger (Phase 3, M8):** the `idempotency_records` table is both the dedupe mechanism and the source of replay responses. The claim INSERT, the protected mutation, its audit row, and the response snapshot commit in one transaction; a DB unique index `(actor_id, operation, idempotency_key)` serializes concurrent same-key requests. App-level claim lookups resolve retries *before* touching the business rows, so a replay never re-runs business logic. Expired keys are refused (409) rather than re-executed — bias toward refusing a stale retry over risk of a silent duplicate.
 - **Application-level RBAC with shared project-visibility rules:** admin/procurement see all projects; supervisors/clients see only assigned ones, enforced per-endpoint via `project_access.assert_can_view_project`.
-- **Access token in browser memory only; refresh token in localStorage** — chosen to reduce XSS lift of the access token (with the known trade-off documented in Security concerns).
+- **Access token in browser memory only; refresh token in localStorage** — chosen to reduce XSS lift of the access token (with the known trade-off documented in Security concerns). M9 added rotation + server-side revocation so a leaked refresh token is single-use and family-revocable; httpOnly-cookie transport remains deferred.
+- **Refresh sessions are server-side state (Phase 3 M9):** opaque refresh tokens hashed (SHA-256) into `refresh_sessions`; rotation is a `SELECT ... FOR UPDATE`-guarded single transaction; reuse of a dead token revokes the whole family. This is the session layer M11 (Google Sign-In) will join by keying on `user_id` — no provider-specific columns.
 - **Explicit rate limiting on auth only** (slowapi), isolated from application traffic.
 - **explicit, exact-pinned dependencies** (no `~=` ranges) and a two-stage (runtime vs dev) requirements split.
 - **Migrations committed as Alembic revisions** and applied at container startup (dev); `env.py` reads credentials from app settings as the single source of truth.

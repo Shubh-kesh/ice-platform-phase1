@@ -34,7 +34,7 @@
 - **SHOULD:** Client view-only access: invoices + progress, no budget figures (role-scoped response contract). *(M6 — must land before real clients use Google Sign-In)*
 - **SHOULD:** Task date-order validation on update + dependency cycle detection. *(DONE — M7: date-order enforced on PATCH incl. partial updates; `depends_on_id` same-project/self/existence checks on update; 2- and 3-node cycle detection; task writes serialized via the project row lock so opposing concurrent links can't commit a cycle. App-layer only — no migration. See `docs/CURRENT_STATE.md` §4b)*
 - **SHOULD:** Idempotency keys on POSTs (movements, site logs, invoices). *(DONE — M8: backend infra + `Idempotency-Key` header on POST job-costs, inventory movements, site-logs and project creation; `POST /projects/{id}/invoices` also protected since M5)*
-- **MUST:** Token security — refresh-token rotation + server-side revocation + optional httpOnly cookie. *(M9 — prerequisite for M11)*
+- **MUST:** Token security — refresh-token rotation + server-side revocation + optional httpOnly cookie. *(DONE — M9: opaque refresh tokens (SHA-256 hashed in `refresh_sessions`), rotation under a row lock, server-side logout revocation, family-wide revocation on token reuse past a 10s grace window, deactivated-user cutoff at refresh, auth-event auditing with IP. httpOnly-cookie transport deliberately deferred — dev is cross-origin (`:5173` → `:8000`) and SameSite=None needs HTTPS. See `docs/CURRENT_STATE.md` §4b)*
 - **MUST:** **Google Sign-In (NEW — M11)** — Google as **authentication only**; ICE retains identity, roles, authorizations, project assignments, permissions. Google never grants ADMIN. Session handling inherits M9 rotation/revocation/deactivation cutoff. Plans land here while Phase 4 provides the deploy/observability rails before real users arrive.
 
 ---
@@ -52,7 +52,7 @@ Execution order (M1/M2/M4 shipped):
 7. **M6 — client view-only scope** — before real clients can authenticate.
 8. **M7 — task validation** — DONE. Date-order on PATCH (full + partial), dependency same-project/self/existence on update, 2- and 3-node cycle rejection; task writes take the project row lock so concurrent opposing links can't form a cycle. App-layer only, no migration, no frontend change. See `docs/CURRENT_STATE.md` §4b.
 9. **M8 — idempotency keys** — DONE. Server-side `Idempotency-Key` support on POST job-costs, inventory movements, site-logs and project creation: a retry replays the stored response (no double-mutation), a failed attempt frees the key, and concurrent same-key requests execute exactly once via a DB unique-index claim ledger. See `docs/CURRENT_STATE.md` §4b.
-10. **M9 — token security** — prerequisite for Google Sign-In.
+10. **M9 — token security** — DONE. Opaque hashed refresh sessions; rotation + server-side revocation + deactivated-user cutoff + reuse/theft family-revocation + auth-event audit; access tokens stay stateless JWT. Prerequisite for M11. See `docs/CURRENT_STATE.md` §4b.
 11. **M11 — Google Sign-In** (NEW) — the real-user rollout gate; after Phase 4 rails.
 
 Ordering rationale:
@@ -72,8 +72,8 @@ Ordering rationale:
 - `invoices`: add `milestone_definition`/`contract_mapping` reference; keep `external_*` columns. *(DONE — M5: `billing_milestone_id` reference + unique `invoice_number` + partial double-billing index; see CURRENT_STATE.md §4b)*
 - **(M10)** `projects`: add unique `project_code varchar` (auto-generated, e.g. `PRJ-YYYY-####`), lifecycle columns `created_by`, `status` extension to DRAFT/ARCHIVED (keep existing enum values + add), `completed_at`/`completed_by`, `archived_at`/`archived_by`, `restored_at`/`restored_by`. No hard deletes — a soft lifecycle, never `DELETE`.
 - **(M10)** Add `is_demo`/seed marking OR a `seed_source` column so demo rows are identifiable and gagable; add `demo` flag to `seed.py` own runs (dev-only, env-gated).
-- **(M11)** `users`: add nullable `google_sub` (unique index) + `google_email` (read-only sync) + `password_hash_nullable` migration so Google-linked users can exist without a local password; keep `hashed_password` for retained username/password path.
-- **(M11)** New immutable-ish `auth_events`/`refresh_sessions` row per issued refresh token for rotation + revocation (M9); store `google_email` change history in `audit_logs`.
+- **(M9)** `refresh_sessions` table: one row per issued opaque refresh token (SHA-256 `token_hash`, `family_id` rotation chain, `parent_id`, `issued_at`/`expires_at`/`revoked_at`/`revoked_reason`, `ip_address`; unique token_hash, FKs user CASCADE / parent SET NULL, indexes on family/user+revoked/expires). *(DONE — migration `h6c7d8e9f0a1`)*
+- **(M11)** `users`: add nullable `google_sub` (unique index) + `google_email` (read-only sync) + `password_hash_nullable` migration so Google-linked users can exist without a local password; keep `hashed_password` for retained username/password path. Google sessions join the existing `refresh_sessions` (keyed by `user_id` — no provider-specific columns).
 - **(M3)** `health_overrides`: admin-set manual verdict per target (overall/timeline/budget/safety), optional `expires_at`, partial unique `(project_id, applied_to) WHERE revoked_at IS NULL`; widen `audit_logs.action` to varchar(100). *(DONE — migration `e8f2a3c5b7e4`)*
 - Unique constraints: `project_assignments (project_id, user_id)` *(DONE — M2)*; `inventory_items (project_id, name)`; `daily_site_logs (project_id, log_date)` (or allow-override policy column).
 - `stock_movements` + `audit_logs`: add composite indexes for listing (`created_at DESC`).
@@ -106,7 +106,7 @@ Ordering rationale:
 - **MUST:** Assignment API tests (admin-only, isolation effects on supervisors/clients).
 - **MUST:** `test_google_auth.py` (M11) — OIDC code-exchange success links by verified email to existing ICE user preserving role/assignments; unknown email rejected or goes to invite path per decision; Google never grants admin; google_sub unique + unlink/relink; deactivated ICE user cut off at callback; refresh rotation + revocation enforced on the Google session; email-change handling (old link invalid); audit login/auth events.
 - **MUST:** `test_idempotency.py` (M8) — retry with the same key + body replays the stored response (same resource id, no double-mutation, budget/stock unchanged); same key + different body/project → 409; a failed first attempt frees the key for a safe retry; concurrent same-key requests execute exactly once; keys are namespaced per user and per operation; invalid key lengths → 400.
-- **MUST:** M9 token tests (rotation: old refresh invalid after use; revocation: logout kills server-side; deactivated user blocked on next use).
+- **MUST:** M9 token tests (rotation: old refresh invalid after use; revocation: logout kills server-side; deactivated user blocked on next use). *(DONE — `test_auth_sessions.py`: 23 tests incl. rotation, old/new-token behavior, logout + revoked + expired + deactivated + reactivation, reuse/theft family-revocation, auth events with IP, and two real-connection concurrency races — same-token refresh exactly-once, old-token reuse, refresh-vs-logout determinism)*
 
 **Security considerations**
 - Role-scope project responses per role; never leak `budget_*` to client. *(M6)*
@@ -114,7 +114,7 @@ Ordering rationale:
 - **M10:** lifecycle transitions admin-only + fully audited (actor, timestamp, old/new state). ARCHIVED projects are read-only for admins and invisible to others; never a DELETE endpoint. Project codes validated/format-enforced; uniqueness guaranteed.
 - **M11:** Google is authentication only — ICE user record/role/assignments/permissions are the authorization source; **Google auth must never auto-grant ADMIN**. Validate OIDC `iss`/`aud`/`email_verified`, PKCE/nonce + state on callback; link by verified email only; deactivated users blocked; refresh rotation/revocation (M9) inherited; audit every auth event (login/refresh/logout/email-change). Account-linking risk: prevent silent cross-account takeover — re-verify email + require explicit consent if `google_sub` already bound to another ICE user.
 - Audit every finance and assignment write.
-- Continue token work: **refresh-token rotation + server-side revocation** + optional httpOnly cookie (security debt from Phase 1; do before M11 — see milestone sequence).
+- Continue token work: **optional httpOnly-cookie transport** for the refresh token (deliberately deferred in M9 — dev is cross-origin and SameSite=None requires HTTPS; the rotation/revocation half of the Phase-1 security debt is now DONE).
 
 **AI/ML considerations:** none required. But record **structured** cost data (cost codes, milestone events) — this becomes a future feature.
 
@@ -123,7 +123,7 @@ Ordering rationale:
 - A supervisor/client blocked from projects after unassignment within one request.
 - `Project.budget_spent` equals `SUM(job_costs)`; milestone completion creates the configured `%` invoice as draft. *(DONE — M4 + M5)*
 - Client role cannot read any budget field; can read own invoices. *(DONE — M3 RBAC slice + M5 restricted shape)*
-- No audit row missing `ip_address`; refresh tokens rotate and deactivated users are cut off immediately. *(M9)*
+- No audit row missing `ip_address` — auth events now record it (Phase 3 M9); business mutations still pass NULL; refresh tokens rotate and deactivated users are cut off immediately. *(M9: refresh rotation/revocation/cutoff DONE)*
 - **(M10)** Admin creates a project → gets a unique auto-generated code; project can be walked DRAFT→ACTIVE→COMPLETED→ARCHIVED and back (RESTORE) only via audited admin actions; ARCHIVED absent from normal project lists yet present in reporting; no project state can be hard-deleted; seed/demo projects exist only when a dev/demo flag is set.
 - **(M11)** Sign-in with Google authenticates an existing ICE user (role + project assignments unchanged) or routes unknown emails per the chosen policy; Google never yields ADMIN; Google-linked sessions rotate/revoke refresh tokens and are blocked for deactivated users.
 

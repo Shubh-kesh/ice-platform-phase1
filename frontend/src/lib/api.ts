@@ -70,6 +70,23 @@ async function refreshAccessToken(): Promise<string | null> {
   }
 }
 
+export async function logoutApi(): Promise<void> {
+  const refreshToken = getStoredRefreshToken();
+  try {
+    if (refreshToken) {
+      // Plain axios, not `api` — the refresh-on-401 interceptor must not fire
+      // during logout.
+      await axios.post(`${API_URL}/auth/logout`, { refresh_token: refreshToken });
+    }
+  } catch {
+    // Best-effort revocation — the server expires the session anyway, and local
+    // state below is cleared regardless so the client is always logged out.
+  } finally {
+    setAccessToken(null);
+    setStoredRefreshToken(null);
+  }
+}
+
 export async function getProjects(includeArchived = false): Promise<Project[]> {
   const { data } = await api.get<Project[]>("/projects", {
     params: includeArchived ? { include_archived: true } : {},

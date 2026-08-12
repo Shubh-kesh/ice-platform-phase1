@@ -63,8 +63,8 @@ app.add_exception_handler(RateLimitExceeded, lambda request, exc: JSONResponse(
 ))
 
 # CORS — only the origins listed in BACKEND_CORS_ORIGINS may call this API
-# from a browser. Credentials are allowed since auth uses httpOnly cookies
-# for the refresh token.
+# from a browser. Credentials are allowed for the SPA's Bearer header + the
+# (deferred) httpOnly-cookie refresh transport — see CURRENT_STATE.md §4b.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[str(origin) for origin in settings.BACKEND_CORS_ORIGINS],

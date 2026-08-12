@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # Window (seconds) in which re-presenting an already-rotated token is treated
+    # as a benign concurrent-race (two tabs refreshing at once) rather than theft.
+    # Beyond this window reuse revokes the whole rotation family.
+    REFRESH_TOKEN_REUSE_GRACE_SECONDS: int = 10
     ALGORITHM: str = "HS256"
 
     # CORS — list of allowed frontend origins

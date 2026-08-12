@@ -2,9 +2,9 @@
 M5 — migration-chain integrity test.
 
 Runs the real Alembic migration chain against a scratch database:
-upgrade head -> downgrade base -> upgrade head. This proves the M5 migration
-(billing_milestones + invoices + enum types + partial unique index) is:
-  * reversible (downgrade drops every M5 object cleanly), and
+upgrade head -> downgrade base -> upgrade head. This proves the full chain
+(through the M9 refresh_sessions migration) is:
+  * reversible (downgrade drops every migration object cleanly), and
   * replayable (the chain reaches the same head twice).
 
 Runs Alembic in a subprocess with POSTGRES_DB pointed at a throwaway database,
@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from tests.conftest import ADMIN_DATABASE_URL
 
 MIGRATION_DB_NAME = "ice_migration_test_db"
-HEAD_REVISION = "g5b6c7d8e9f0"
+HEAD_REVISION = "h6c7d8e9f0a1"
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -96,13 +96,13 @@ async def test_migration_chain_upgrade_downgrade_replayable():
         current = _alembic(["current"], cwd=BACKEND_DIR)
         assert HEAD_REVISION in current.stdout, current.stdout
 
-        for table in ("billing_milestones", "invoices"):
+        for table in ("billing_milestones", "invoices", "refresh_sessions"):
             assert await _table_exists(table), f"{table} missing after upgrade head"
 
         down = _alembic(["downgrade", "base"], cwd=BACKEND_DIR)
         assert down.returncode == 0, down.stderr or down.stdout
 
-        for table in ("billing_milestones", "invoices"):
+        for table in ("billing_milestones", "invoices", "refresh_sessions"):
             assert not await _table_exists(table), f"{table} not dropped on downgrade"
 
         replay = _alembic(["upgrade", "head"], cwd=BACKEND_DIR)

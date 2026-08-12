@@ -10,6 +10,7 @@ import {
   setAccessToken,
   getStoredRefreshToken,
   setStoredRefreshToken,
+  logoutApi,
 } from "./api";
 import type { TokenResponse, User } from "../types";
 
@@ -66,8 +67,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function logout() {
-    setAccessToken(null);
-    setStoredRefreshToken(null);
+    // Fire-and-forget server-side revocation (rotated tokens make the refresh
+    // session single-use); local state is cleared either way.
+    void logoutApi();
     setUser(null);
   }
 

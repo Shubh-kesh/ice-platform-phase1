@@ -11,6 +11,7 @@ from app.core.security import hash_password
 from app.middleware.audit import record_audit
 from app.models.user import User, UserRole
 from app.schemas.user import UserCreate, UserRead, UserUpdate
+from app.services.auth_tokens import revoke_user_sessions
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -81,6 +82,13 @@ async def update_user(
         if old_value != value:
             changes[field] = {"old": old_value, "new": value}
         setattr(user, field, value)
+
+    # M9 deactivated-user cutoff: flipping is_active True -> False revokes every
+    # outstanding refresh session so the account can't keep refreshing, and a
+    # later reactivation requires a fresh login. Same transaction as the update.
+    deactivation = changes.get("is_active") == {"old": True, "new": False}
+    if deactivation:
+        await revoke_user_sessions(db, user.id, "user_deactivated")
 
     await db.flush()
 

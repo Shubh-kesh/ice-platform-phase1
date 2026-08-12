@@ -159,10 +159,10 @@ pass against real Postgres; frontend `tsc`+`vite build` and `oxlint` clean; ruff
 app+tests the same 4 pre-existing F401s, mypy the same 12 pre-existing errors —
 nothing new introduced).
 Dev DB is fully migrated: `a4b6c8d9e2f3` → `b5c7d9e1f203` → `c6d8e0f2a415` →
-`d7e9f1a2b3c4` → `e8f2a3c5b7e4` (M3) all applied (verified Aug 11: `alembic_version
-= e8f2a3c5b7e4`, `health_overrides` table + partial unique index
-`uq_health_overrides_active_per_target WHERE revoked_at IS NULL`, `audit_logs.action`
-now varchar(100)).
+`d7e9f1a2b3c4` → `e8f2a3c5b7e4` (M3) → `f3a4b5c6d7e8` (M4) → `g5b6c7d8e9f0`
+(M5) → `h6c7d8e9f0a1` (M9, `refresh_sessions`) all applied (verified Aug 12:
+`alembic_version = h6c7d8e9f0a1`, unique `token_hash`, FKs CASCADE/SET NULL, and
+the family/user/expires indexes all present in PostgreSQL).
 
 ## 5. Current phase
 
@@ -170,25 +170,24 @@ Phase 3 — "Integrity, Operable RBAC, Admin Lifecycle & the Finance Pillar".
 
 ## 6. Current milestone
 
-**M5 — Milestone Invoicing** is implemented and verified (backend tests + real
-Alembic upgrade/downgrade on a scratch DB + frontend build/lint); next up is
-**M6 — Client view-only scope** (the M3 serializer slice + M5 restricted
-invoice shape are already in place).
+**M9 — Token security** is implemented and verified (backend tests + real Alembic
+upgrade on the dev DB + fresh/scratch upgrade-downgrade-replay + frontend
+build/lint); next up is **M11 — Google Sign-In** (after Phase 4 rails). M9
+deferred httpOnly-cookie refresh transport (cross-origin dev needs SameSite=None
++ HTTPS); rotation/revocation/deactivated-cutoff + auth-event audit are live.
 
 ## 7. Phase 3 remaining, in execution order
 
-1. **M6 — Client view-only scope** (no budget fields for client role) — the M3
-   serializer slice and M5 client invoice shape are a head start.
-2. **M7 — Task date-order validation on update + dependency cycle detection.**
-3. **M9 — Token security:** refresh rotation + server-side revocation.
-4. **M11 — Google Sign-In** (NEW): Google authenticates only; ICE owns identity/
-   role/assignments/permissions; never auto-grants ADMIN; inherits M9 sessions.
+1. **M11 — Google Sign-In** (NEW): Google authenticates only; ICE owns identity/
+   role/assignments/permissions; never auto-grants ADMIN; inherits M9 sessions
+   (rotation/revocation/deactivation cutoff now in `refresh_sessions`).
    Real-user rollout gate — after Phase 4 infra.
+2. Optional post-M9 hardening: httpOnly-cookie refresh transport (deferred in M9).
 
 Phase 3 DB stubs still pending: unique `inventory_items (project_id, name)`,
 `daily_site_logs (project_id, log_date)`; stock_movements/audit_logs list
 indexes. Pre-existing debt (not in Phase 3 scope): ruff 4 F401 errors, mypy 10
-errors (was 12 — M5 fixed the `finance.py` forward refs), no frontend tests.
+errors, no frontend tests.
 
 ## 8. Exact next action
 
@@ -209,9 +208,17 @@ errors (was 12 — M5 fixed the `finance.py` forward refs), no frontend tests.
    running the OLD image + docker-cp'd code — ephemeral. When network to Docker
    Hub returns, `docker compose up -d --build backend` will produce the real new
    image (and the Dockerfile change is already in the repo).
-3. Commit the M5 work when the owner asks.
-4. Then **M6 — Client view-only scope** (finalize the client portal slice:
-   already no budget figures; payment-request list shipped with M5).
+3. **M9 (Token security) implemented and verified — NOT committed** (owner commits
+   on request): opaque refresh tokens (SHA-256 hashed in `refresh_sessions`),
+   row-locked rotation, server-side logout revocation, family-wide revocation on
+   reuse past a 10s grace window, deactivated-user cutoff (sessions revoked on
+   deactivation + live `is_active` check), auth-event audit with IP. **193/193**
+   backend tests pass (incl. two real-connection concurrency races), frontend
+   `tsc`+`vite build` clean, `oxlint` 1 pre-existing warning, ruff app+tests the
+   same 4 pre-existing F401s, mypy the same 10 pre-existing errors. Migration
+   `h6c7d8e9f0a1` verified: dev-DB upgrade + scratch upgrade/downgrade/replay.
+   httpOnly-cookie transport deliberately deferred (cross-origin dev).
+4. Then **M11 — Google Sign-In** planning (inherits M9 `refresh_sessions`).
 
 ## 9. Ambiguities / conflicts captured
 
