@@ -208,8 +208,8 @@ errors, no frontend tests.
    running the OLD image + docker-cp'd code — ephemeral. When network to Docker
    Hub returns, `docker compose up -d --build backend` will produce the real new
    image (and the Dockerfile change is already in the repo).
-3. **M9 (Token security) implemented and verified — NOT committed** (owner commits
-   on request): opaque refresh tokens (SHA-256 hashed in `refresh_sessions`),
+3. **M9 (Token security) committed as `0b12dd8` and live smoke-verified (see §11):**
+   opaque refresh tokens (SHA-256 hashed in `refresh_sessions`),
    row-locked rotation, server-side logout revocation, family-wide revocation on
    reuse past a 10s grace window, deactivated-user cutoff (sessions revoked on
    deactivation + live `is_active` check), auth-event audit with IP. **193/193**
@@ -260,3 +260,45 @@ errors, no frontend tests.
 - M11 owner decisions still required (see §8/§9 in previous notes).
 - Deviating from roadmap UI guidance (replacing `alert()` with inline errors)
   applies to new components only; existing panels still use `alert()`.
+
+## 11. M9 live smoke validation (Aug 12, post-commit)
+
+M9 committed as `0b12dd8` (`feat: add refresh token rotation and session security
+(M9)`). Backend container rebuilt from the committed image; migrations at head
+`h6c7d8e9f0a1`; demo DB untouched (4 users, 16 projects).
+
+Live HTTP smoke against the running docker backend + dev DB (tokens held in
+memory, only statuses/redacted values logged) — all passed:
+
+1. **Login** contract: `POST /auth/login` → 200; access = JWT (memory-only in
+   frontend), refresh = opaque 64-char secret; `GET /auth/me` works.
+2. **Rotation:** original → 200 + new token; **old replay → 401**; replacement →
+   200 + newer token (chain continues).
+3. **Logout/revocation:** `/auth/logout` → 204 (idempotent on repeat); refresh of
+   the logged-out token → 401 with no pair in the body.
+4. **Concurrent refresh:** two independent clients raced the same token →
+   exactly one `[200,401]`; original dead after the race; winner's replacement
+   usable exactly once (reuse → 401). R2 grace window (10s) makes the loser a
+   benign reject; past the window it's `refresh_reuse_detected` → family kill.
+5. **Deactivated-user cutoff:** login blocked while `is_active=false`
+   ("This account has been deactivated"); a **live** session's refresh → 401
+   after deactivation; that session stays revoked even after reactivation;
+   fresh login works again. (Deactivate/reactivate via admin `PATCH /users`,
+   supervisor restored to `is_active=true`.)
+6. **Audit + IP:** `audit_logs` shows `login`×6, `logout`×2, `refresh`×7,
+   `refresh_reuse_detected`×3 — **all with `ip_address` populated**. User
+   deactivate/reactivate recorded as `update` with timestamp (IP optional per
+   requirement wording). R1 state verified in PostgreSQL: rows revoked with
+   `revoked_reason='rotated'`, unique `token_hash`, family/expires indexes.
+7. **Rate limits intact** (nothing weakened): login 5/min, refresh 10/min,
+   logout 10/min all enforced — confirmed live by 429s at the boundary. (The
+   first §6 attempt hit 429 because the smoke script exhausted the refresh
+   bucket, not a product defect; re-ran cleanly after the window reset.)
+8. **RBAC unchanged:** supervisor `GET /users` → 403; admin access token from
+   before the smoke still valid.
+
+Tests: `tests/test_auth_sessions.py` + `tests/test_migrations.py` → **24 passed**
+against real Postgres; frontend `npm run build` clean.
+
+Test artifacts in the dev DB (benign): ~13 `refresh_sessions` rows (live dev
+sessions from the smoke). Working tree clean except pre-existing untracked `tet`.
