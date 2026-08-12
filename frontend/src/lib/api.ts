@@ -3,6 +3,8 @@ import type {
   BillingMilestone,
   BillingMilestoneCreateInput,
   BillingMilestoneUpdateInput,
+  GoogleAuthorizeResponse,
+  GoogleCallbackInput,
   HealthOverrideCreateInput,
   HealthOverrideSummary,
   Invoice,
@@ -12,11 +14,19 @@ import type {
   ProjectCreateInput,
   ProjectHealth,
   TokenResponse,
+  User,
+  UserCreateInput,
+  UserUpdateInput,
 } from "../types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000/api/v1";
 
 const REFRESH_TOKEN_KEY = "ice_refresh_token";
+
+// M11 google flow session storage — the callback route verifies `state` against
+// this exact value before completing the exchange.
+export const GOOGLE_STATE_KEY = "ice_google_state";
+export const GOOGLE_VERIFIER_KEY = "ice_google_verifier";
 
 // Access token lives only in memory — never localStorage — so it can't be
 // lifted by a XSS payload reading storage. It's lost on hard refresh, which
@@ -85,6 +95,47 @@ export async function logoutApi(): Promise<void> {
     setAccessToken(null);
     setStoredRefreshToken(null);
   }
+}
+
+// --- M11: Google sign-in -----------------------------------------------------
+
+// Both routes are public and rate-limited; plain axios keeps them clear of the
+// authenticated `api` interceptors (no bearer token exists mid-flow yet).
+export async function googleAuthorize(): Promise<GoogleAuthorizeResponse> {
+  const { data } = await axios.get<GoogleAuthorizeResponse>(
+    `${API_URL}/auth/google/authorize`
+  );
+  return data;
+}
+
+export async function googleCallback(
+  input: GoogleCallbackInput
+): Promise<TokenResponse> {
+  const { data } = await axios.post<TokenResponse>(
+    `${API_URL}/auth/google/callback`,
+    input
+  );
+  return data;
+}
+
+// --- admin user management ---------------------------------------------------
+
+export async function listUsers(): Promise<User[]> {
+  const { data } = await api.get<User[]>("/users");
+  return data;
+}
+
+export async function createUser(input: UserCreateInput): Promise<User> {
+  const { data } = await api.post<User>("/users", input);
+  return data;
+}
+
+export async function updateUser(
+  userId: string,
+  input: UserUpdateInput
+): Promise<User> {
+  const { data } = await api.patch<User>(`/users/${userId}`, input);
+  return data;
 }
 
 export async function getProjects(includeArchived = false): Promise<Project[]> {

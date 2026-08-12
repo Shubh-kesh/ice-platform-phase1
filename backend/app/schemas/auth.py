@@ -18,3 +18,16 @@ class RefreshRequest(BaseModel):
 
 class LogoutRequest(BaseModel):
     refresh_token: str
+
+
+class GoogleAuthorizeResponse(BaseModel):
+    authorize_url: str
+    state: str
+    code_verifier: str
+    nonce: str
+
+
+class GoogleCallbackRequest(BaseModel):
+    code: str
+    code_verifier: str
+    state: str

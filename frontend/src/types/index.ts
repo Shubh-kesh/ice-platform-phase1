@@ -24,7 +24,42 @@ export interface User {
   phone: string | null;
   role: UserRole;
   is_active: boolean;
+  google_linked: boolean;
+  has_password: boolean;
+  google_email: string | null;
   created_at: string;
+}
+
+export interface UserCreateInput {
+  email: string;
+  full_name: string;
+  phone?: string | null;
+  role: UserRole;
+  google_only?: boolean;
+  password?: string | null;
+}
+
+export interface UserUpdateInput {
+  full_name?: string;
+  phone?: string | null;
+  is_active?: boolean;
+  role?: UserRole;
+}
+
+// M11: Google sign-in flow — backend returns the consent URL plus the flow's
+// state/verifier; the SPA stashes them in sessionStorage and drives the whole
+// tab to authorize_url, then completes on /google/callback.
+export interface GoogleAuthorizeResponse {
+  authorize_url: string;
+  state: string;
+  code_verifier: string;
+  nonce: string;
+}
+
+export interface GoogleCallbackInput {
+  code: string;
+  code_verifier: string;
+  state: string;
 }
 
 // The API is role-scoped (M3/M6): admin/procurement get the full shape,

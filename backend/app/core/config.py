@@ -5,7 +5,7 @@ Never hardcode secrets here — this file is committed to git.
 """
 from typing import List
 
-from pydantic import AnyHttpUrl, field_validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -65,6 +65,21 @@ class Settings(BaseSettings):
     @property
     def REDIS_URL(self) -> str:
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/0"
+
+    # Google OAuth (M11) — empty values disable the Google sign-in surfaces.
+    # All values come from env (backend/.env, never committed).
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REDIRECT_URI: str = "http://localhost:5173/google/callback"
+    # Optional workspace-domain lock: when set, only Google accounts whose
+    # `hd` matches are accepted (ID token `hd` claim).
+    GOOGLE_HOSTED_DOMAIN: str = ""
+    # Authorization-code `state` freshness window in seconds.
+    GOOGLE_AUTH_STATE_MAX_AGE_SECONDS: int = 600
+
+    @property
+    def GOOGLE_AUTH_ENABLED(self) -> bool:
+        return bool(self.GOOGLE_CLIENT_ID and self.GOOGLE_CLIENT_SECRET)
 
     # GCP (only required in production)
     GCP_PROJECT_ID: str = ""

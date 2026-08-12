@@ -11,6 +11,7 @@ import {
   getStoredRefreshToken,
   setStoredRefreshToken,
   logoutApi,
+  googleCallback,
 } from "./api";
 import type { TokenResponse, User } from "../types";
 
@@ -18,6 +19,7 @@ interface AuthContextValue {
   user: User | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  googleLogin: (code: string, state: string, verifier: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -66,6 +68,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(me.data);
   }
 
+  // M11: complete a Google callback with the same token storage as password
+  // login — a Google session is a normal ICE session (M9 rotation/revocation
+  // covered). Rejects (401/403/409) propagate to the callback route for display.
+  async function googleLogin(code: string, state: string, verifier: string) {
+    const tokens = await googleCallback({
+      code,
+      code_verifier: verifier,
+      state,
+    });
+    setAccessToken(tokens.access_token);
+    setStoredRefreshToken(tokens.refresh_token);
+    const me = await api.get<User>("/auth/me");
+    setUser(me.data);
+  }
+
   function logout() {
     // Fire-and-forget server-side revocation (rotated tokens make the refresh
     // session single-use); local state is cleared either way.
@@ -74,7 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout }}>
+    <AuthContext.Provider value={{ user, isLoading, login, googleLogin, logout }}>
       {children}
     </AuthContext.Provider>
   );

@@ -6,6 +6,7 @@ import type { Project, ProjectCreateInput } from "../types";
 import { AppShell } from "../components/AppShell";
 import { KpiStrip } from "../components/KpiStrip";
 import { ProjectCard } from "../components/ProjectCard";
+import { UsersPanel } from "../components/UsersPanel";
 import { useAuth } from "../lib/auth-context";
 
 const EMPTY_FORM: ProjectCreateInput = {
@@ -173,6 +174,13 @@ export function CommandCenter() {
             ))}
           </div>
         </>
+      )}
+
+      {/* M11: admin-only user onboarding (invites, roles, activation). */}
+      {isAdmin && (
+        <div className="mt-8">
+          <UsersPanel />
+        </div>
       )}
 
       {showForm && (

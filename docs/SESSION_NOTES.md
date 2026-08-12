@@ -1,4 +1,4 @@
-# Session Notes — Phase 3 (M1 + M2 + M4 + M10 + M3 + M8 + M5 shipped; M6 planned)
+# Session Notes — Phase 3 (M1 + M2 + M4 + M10 + M3 + M5 + M6 + M8 + M9 + M11 shipped)
 
 **Session dates:** Aug 9–11, 2026. Branch `claude-development`.
 
@@ -302,3 +302,82 @@ against real Postgres; frontend `npm run build` clean.
 
 Test artifacts in the dev DB (benign): ~13 `refresh_sessions` rows (live dev
 sessions from the smoke). Working tree clean except pre-existing untracked `tet`.
+
+## 12. M11 — Google Sign-In & User Onboarding (Aug 12, 2026)
+
+M11 implementation is complete and uncommitted. The saved M11 plan's defaults
+were used: silent verified-email linking with full audit, reject unknown Google
+emails, distinct activation/deactivation audit actions, and an admin Users panel
+in Command Center.
+
+- **OAuth flow:** public `GET /auth/google/authorize` returns an authorization
+  URL, HMAC-authenticated stateless state, nonce, and S256 PKCE verifier. Public
+  `POST /auth/google/callback` verifies state, exchanges the code server-side,
+  and verifies the RS256 ID token against Google's JWKS with issuer, audience,
+  exp/iat/nbf, nonce, `email_verified`, and optional hosted-domain checks.
+- **Identity rules:** `google_sub` is authoritative; verified email is only the
+  link path. Existing linked users sign in normally, local/password and pending
+  Google-only users can link, unknown emails return 403, deactivated users are
+  rejected, duplicate identities/email confusion return 409, and free verified
+  email drift updates `users.email`/`google_email` with `email_changed` audit.
+- **Onboarding:** `POST /users` supports `google_only=true` with no password and
+  records `user_invited`; `PATCH /users/{id}` supports role changes and records
+  `role_changed`, `user_activated`, or `user_deactivated` as appropriate.
+- **M9 integration:** successful Google authentication calls the existing
+  `issue_session()` path. Google sessions therefore use refresh rotation,
+  family revocation, logout, reuse detection, and the deactivated-user cutoff.
+- **Frontend:** Login has a Google button; `/google/callback` validates the tab's
+  sessionStorage state/verifier and stores the normal ICE token pair; the admin
+  Users panel supports invites, roles, activation, and linked/pending status.
+- **Migration:** `i7d8e9f0a1b2_m11_google_signin.py` follows
+  `h6c7d8e9f0a1`, makes `hashed_password` nullable, adds `google_sub` with a
+  unique index and adds `google_email`. Downgrade intentionally fails if
+  Google-only rows with NULL passwords remain.
+- **Verification:** `pytest tests/ -q` = **213 passed**; the M11 file contains
+  18 focused tests. Frontend build passed. Frontend lint has only the existing
+  `auth-context.tsx` Fast Refresh warning. Ruff retains 2 pre-existing errors;
+  mypy retains 10 pre-existing errors. `git diff --check` passed.
+- **Environment note:** Docker was unavailable during the original
+  implementation session. Re-review later performed a clean no-cache backend
+  rebuild, restarted the stack, confirmed `httpx==0.27.2` inside `/venv`,
+  reached `/health`, and observed startup migration
+  `h6c7d8e9f0a1 -> i7d8e9f0a1b2`.
+- **httpx incident root cause:** the repository requirements already declared
+  `httpx==0.27.2`, but the running image was 11 hours old and its `/venv` was
+  built before that uncommitted M11 dependency change. Compose bind-mounts only
+  `backend/app`, so it exposed current M11 code to the stale dependency image.
+  `docker compose build --no-cache backend` installed httpx and fixed startup.
+- **Migration re-review:** Docker dev DB is at `i7d8e9f0a1b2`; direct PostgreSQL
+  inspection confirmed the three nullable user columns and unique
+  `ix_users_google_sub`. A fresh scratch DB upgraded through the full chain,
+  and a Google-only row correctly made downgrade fail at `SET NOT NULL`.
+- **Dependency note:** the plan's security/test requirement is implemented with
+  the existing `python-jose` plus pinned `httpx` and an injectable JWKS source;
+  `google-auth` was not added because its public verifier does not expose the
+  injectable certificate source required by the M11 test strategy.
+
+- **Re-review status:** focused M11/M9/users/migration tests = **52 passed**;
+  full suite = **213 passed**. Docker rebuild/startup/health/import checks pass.
+  Real configured Google OAuth smoke remains pending. Admin self/last-admin
+  lockout remains unguarded, and the Google callback uses synchronous httpx
+  calls inside async handlers as a performance/availability concern.
+
+- **Callback failure diagnosis:** token exchange returned 200 and JWKS HTTP
+  returned 200, but Google JWKS supplied RSA `n/e` JWKs without `x5c`. The old
+  parser discarded every key and returned generic 401 before signature/claim
+  validation. `_fetch_google_certs()` now accepts validated RSA JWKs and a
+  regression test covers the real `python-jose` JWK path.
+- **Second callback failure — `at_hash`:** with the JWK parser running, a fresh
+  real flow still returned 401. Temporary safe stage logging pinpointed
+  `stage=JWT_SIGNATURE exception=JWTClaimsError message="No access_token
+  provided to compare against at_hash claim."` Google ID tokens carry
+  `at_hash`; python-jose verifies it by default and needs the access token we
+  never use or store. `verify_google_id_token` now sets `verify_at_hash: false`
+  (matching `google.oauth2.id_token.verify_oauth2_token`); signature/iss/aud/
+  exp/iat/nbf/nonce/email/hd checks are unchanged. A regression test signs a
+  token carrying `at_hash`. Temporary diagnostics were removed after the run.
+- **Real flow now passes verification:** a fresh browser flow cleared every
+  stage (state/code-exchange/JWKS/signature/iss/aud/temporal/nonce/hd/email) and
+  reached user resolution. An email with no matching ICE user returned the
+  expected §7/C 403 ("No ICE account found"), confirming the flow works end to
+  end; provisioning a matching account completes login.

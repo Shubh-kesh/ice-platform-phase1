@@ -23,9 +23,18 @@ class User(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    # NULL iff the user is Google-only (hashed_password IS NULL + google_sub IS
+    # NULL => "Pending Google link" — an invite, not yet activated).
+    hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    # Authoritative Google identity (`sub` is immutable; email is never trusted
+    # as identity on its own). Unique index -> one ICE account per Google id.
+    google_sub: Mapped[str | None] = mapped_column(
+        String(255), unique=True, index=True, nullable=True
+    )
+    google_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     role: Mapped[UserRole] = mapped_column(
         Enum(UserRole, name="user_role", native_enum=True), nullable=False
@@ -42,3 +51,12 @@ class User(Base):
 
     def __repr__(self) -> str:
         return f"<User {self.email} ({self.role.value})>"
+
+    @property
+    def google_linked(self) -> bool:
+        """True once the account has a Google identity bound (linked/activated)."""
+        return self.google_sub is not None
+
+    @property
+    def has_password(self) -> bool:
+        return self.hashed_password is not None

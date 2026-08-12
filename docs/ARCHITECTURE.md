@@ -68,7 +68,7 @@ flowchart TB
     PR --> AuthCtx
     CC --> Sync
 ```
-- **Routing:** 3 routes — `/login`, `/` (protected → Command Center), `/projects/:projectId` (protected → Project Detail).
+- **Routing:** 4 routes — `/login`, `/google/callback`, `/` (protected → Command Center), `/projects/:projectId` (protected → Project Detail).
 - **State:** TanStack Query for server state (staleTime 30s, retry 1); local `useState` for forms; `AuthContext` for identity + bootstrap.
 - **API client (`lib/api.ts`):** axios instance with a request interceptor (injects `Authorization: Bearer`) and a response interceptor that performs a **single-flight refresh** on 401, retries the original request once, then redirects to `/login`. Access token is module-level (memory only); refresh token in `localStorage`.
 - **Data fetching:** each page/panel owns its query (`projects`, `project`, `tasks`, `site-logs`, `inventory`); mutations invalidate the matching cache key.
@@ -155,7 +155,7 @@ flowchart TB
     ORM --> DB
 ```
 
-**Layering note:** routes depend directly on models/schemas/core. There is **no full `services/` or `repositories/` layer** — most handlers perform validation, authorization, business logic, persistence, and audit inline. Schemas are the request/response contracts; models are the persistence layer. Thin `app/services/inventory.py` (Phase 3 M1, ledger integrity) and `app/services/finance.py` (Phase 3 M4, budget roll-up) hold the domain math; further Phase 3 domain logic (health) is expected to follow the same pattern.
+**Layering note:** routes depend directly on models/schemas/core. There is **no full `services/` or `repositories/` layer** — most handlers perform validation, authorization, business logic, persistence, and audit inline. Schemas are the request/response contracts; models are the persistence layer. Thin services hold inventory, finance, health, lifecycle and Google OAuth integration logic; M11's `app/services/google_auth.py` contains the external OAuth exchange and ID-token verification.
 
 ### Request lifecycle
 
@@ -189,7 +189,7 @@ sequenceDiagram
 ## 4. Database architecture
 
 - **Engine:** PostgreSQL 16, async SQLAlchemy sessionmaker, pool_size 10 / max_overflow 20, `pool_pre_ping=True`, `expire_on_commit=False`.
-- **Migrations:** Alembic — 2 revisions, applied at container startup (compose) or manually in prod; credentials read from app settings in `alembic/env.py`.
+- **Migrations:** Alembic revisions through M11 head `i7d8e9f0a1b2`, applied at container startup (compose) or manually in prod; credentials read from app settings in `alembic/env.py`.
 
 ### Entity relationship (as implemented)
 
@@ -211,7 +211,9 @@ erDiagram
     users {
         uuid id PK
         string email UK
-        string hashed_password
+        string hashed_password_nullable
+        string google_sub UK nullable
+        string google_email nullable
         string full_name
         enum role
         bool is_active
@@ -292,10 +294,12 @@ erDiagram
 ## 5. Authentication / authorization
 
 ### Authentication
-- `POST /api/v1/auth/login` — verify email + bcrypt password; returns `access_token` (30 min) + `refresh_token` (7 days), both signed HS256 JWTs containing `sub`, `role`, and `type`.
-- `POST /api/v1/auth/refresh` — accepts a valid refresh token (`type == "refresh"`), re-checks the user is active, issues a new pair.
+- `POST /api/v1/auth/login` — verify email + bcrypt password; returns an HS256 access JWT (30 min) plus an opaque M9 refresh token (7 days) stored only as a SHA-256 digest.
+- `POST /api/v1/auth/refresh` — accepts a valid opaque refresh token, rotates it under a row lock, re-checks the user is active, and issues a new pair.
 - `GET /api/v1/auth/me` — returns the current user from the bearer access token.
-- **Rate limiting:** slowapi — 5/min on login, 10/min on refresh (per process, in-memory).
+- `GET /api/v1/auth/google/authorize` — public, rate-limited Authorization Code + PKCE start; returns HMAC state, nonce, verifier and Google consent URL.
+- `POST /api/v1/auth/google/callback` — public, rate-limited server-side code exchange and RS256 ID-token verification; links/resolves the ICE user and issues the normal M9 token pair.
+- **Rate limiting:** slowapi — 5/min on login, 10/min on refresh, 10/min on logout and Google authorize/callback (per process, in-memory).
 
 ### Authorization
 - `get_current_user` (deps) — decodes access token, loads user from DB, 401 if missing/inactive.
@@ -353,6 +357,8 @@ flowchart TB
 |---|---|---|---|
 | POST | `/api/v1/auth/login` | public (rate-limited) | issue token pair |
 | POST | `/api/v1/auth/refresh` | public (rate-limited) | issue new token pair |
+| GET | `/api/v1/auth/google/authorize` | public (rate-limited) | start Google Authorization Code + PKCE flow |
+| POST | `/api/v1/auth/google/callback` | public (rate-limited) | verify Google identity, link ICE user, issue M9 session |
 | GET | `/api/v1/auth/me` | bearer | current user |
 | GET/POST | `/api/v1/users` | admin | list / create users |
 | PATCH | `/api/v1/users/{id}` | admin | update/deactivate user |
@@ -382,11 +388,15 @@ flowchart TB
 
 ## 7. External integrations
 
-**None implemented.** What exists is scaffolding:
+Google Sign-In is implemented as an authentication integration. Accounting and
+object storage remain scaffolding:
 
 - **Accounting (QuickBooks/Xero):** `invoices.external_ref` / `invoices.external_sync_status` columns and the `ExternalSyncStatus` enum are placeholders; no connector, OAuth, or sync code. Blocked on provider OAuth-app registration per repo notes.
 - **Google Cloud Storage:** `GCP_PROJECT_ID` / `GCS_BUCKET_NAME` in settings only; no upload/serving code, no signed URLs.
 - **Redis:** service provisioned; no integration code uses it.
+- **Google OAuth:** authorization-code exchange and ID-token verification are
+  implemented in `app/services/google_auth.py`; Google access/refresh tokens are
+  not stored. A configured provider/client smoke test remains pending.
 
 ```mermaid
 flowchart LR

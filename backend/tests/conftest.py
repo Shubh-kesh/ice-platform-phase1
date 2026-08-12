@@ -24,6 +24,7 @@ Override the connection (e.g. for CI) with:
     TEST_ADMIN_DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/postgres
     TEST_DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/ice_test_db
 """
+import base64
 import os
 import uuid
 from datetime import date
@@ -44,10 +45,20 @@ os.environ.setdefault("POSTGRES_DB", "ice_db")
 os.environ.setdefault("SECRET_KEY", "test-only-secret-never-use-in-production")
 os.environ.setdefault("REDIS_HOST", "localhost")
 os.environ.setdefault("REDIS_PORT", "6379")
+# M11 Google placeholders so the Google surfaces are enabled (endpoints exist,
+# callback tests patch the token exchange + JWKS source). Values never touch a
+# real Google client.
+os.environ.setdefault("GOOGLE_CLIENT_ID", "ci-test-client.apps.googleusercontent.com")
+os.environ.setdefault("GOOGLE_CLIENT_SECRET", "ci-test-client-secret")
+os.environ.setdefault("GOOGLE_REDIRECT_URI", "http://testserver/google/callback")
+os.environ.setdefault("GOOGLE_HOSTED_DOMAIN", "")
 
 import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from jose import jwt as jose_jwt
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from app.core.database import Base, get_db
 from app.core.security import hash_password
@@ -235,3 +246,52 @@ async def auth_header(client: httpx.AsyncClient, email: str, password: str = "Te
     response = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
     assert response.status_code == 200, response.text
     return f"Bearer {response.json()['access_token']}"
+
+
+@pytest.fixture
+def google_jwks():
+    """M11: scratch RSA keypair + a to-mint Google ID tokens signer.
+
+    Tests provide this pair's *public* key as the JWKS cert source and sign
+    claims with the private key, so `verify_google_id_token` runs its real
+    RS256 signature/iss/aud/exp/nonce verification path with zero network.
+    """
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_pem = (
+        private_key.public_key()
+        .public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        .decode("utf-8")
+    )
+    private_pem = (
+        private_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        )
+        .decode("utf-8")
+    )
+    certs = {"test-key-1": public_pem}
+    public_numbers = private_key.public_key().public_numbers()
+
+    def _b64_uint(value: int) -> str:
+        raw = value.to_bytes((value.bit_length() + 7) // 8, "big")
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+    jwks = {
+        "test-key-1": {
+            "kty": "RSA",
+            "kid": "test-key-1",
+            "alg": "RS256",
+            "use": "sig",
+            "n": _b64_uint(public_numbers.n),
+            "e": _b64_uint(public_numbers.e),
+        }
+    }
+
+    def sign(claims: dict, kid: str = "test-key-1") -> str:
+        return jose_jwt.encode(claims, private_pem, algorithm="RS256", headers={"kid": kid})
+
+    return {"certs": certs, "jwks": jwks, "sign": sign, "kid": "test-key-1"}

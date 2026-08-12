@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from tests.conftest import ADMIN_DATABASE_URL
 
 MIGRATION_DB_NAME = "ice_migration_test_db"
-HEAD_REVISION = "h6c7d8e9f0a1"
+HEAD_REVISION = "i7d8e9f0a1b2"
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -85,6 +85,25 @@ async def _table_exists(table: str) -> bool:
         await engine.dispose()
 
 
+async def _column_exists(column: str) -> bool:
+    """M11 — confirm `users.google_sub`/`google_email` are present after upgrade."""
+    engine = create_async_engine(
+        ADMIN_DATABASE_URL.replace("/postgres", f"/{MIGRATION_DB_NAME}")
+    )
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = 'users' AND column_name = :c"
+                ),
+                {"c": column},
+            )
+            return result.scalar_one_or_none() is not None
+    finally:
+        await engine.dispose()
+
+
 @pytest.mark.asyncio
 async def test_migration_chain_upgrade_downgrade_replayable():
     await _drop_migration_database()  # idempotent cleanup from a failed run
@@ -98,12 +117,16 @@ async def test_migration_chain_upgrade_downgrade_replayable():
 
         for table in ("billing_milestones", "invoices", "refresh_sessions"):
             assert await _table_exists(table), f"{table} missing after upgrade head"
+        for column in ("google_sub", "google_email"):
+            assert await _column_exists(column), f"users.{column} missing after upgrade head"
 
         down = _alembic(["downgrade", "base"], cwd=BACKEND_DIR)
         assert down.returncode == 0, down.stderr or down.stdout
 
         for table in ("billing_milestones", "invoices", "refresh_sessions"):
             assert not await _table_exists(table), f"{table} not dropped on downgrade"
+        for column in ("google_sub", "google_email"):
+            assert not await _column_exists(column), f"users.{column} not dropped on downgrade"
 
         replay = _alembic(["upgrade", "head"], cwd=BACKEND_DIR)
         assert replay.returncode == 0, replay.stderr or replay.stdout
