@@ -445,3 +445,64 @@ ROADMAP Phase 4 CI/CD MUST.
 - **Local Postgres note:** Docker daemon was unavailable during verification;
   the Homebrew `postgresql@18` service (with the `ice_user` role) was started
   to run the suite.
+
+## 15. M6 — Client View-Only Scope close-out (Aug 13, 2026)
+
+M6 is a security/contract close-out: the core server-side client boundary
+already existed from Phase 3 (`ProjectClientRead`, `InvoiceClientRead`,
+`assert_not_client`, `assert_can_view_project`, DRAFT-invoice filter/404, 403
+on health/inventory/finance/milestones/writes, frontend `isClient` gating).
+
+- **Endpoint audit:** every client-accessible surface verified server-side; no
+  backend/frontend application code needed changing.
+- **Added coverage** in `tests/test_client_portal.py` (7 → 17 tests): project
+  detail isolation (403 unassigned), archived-404 for clients, client task/
+  site-log read shapes (money fields absent) + write 403, invoice shape
+  allow/deny (amount/overdue present; notes/rules/external/attribution absent),
+  unassigned invoice detail 403, consolidated financial-isolation + mutation
+  matrix (403 across projects/lifecycle/overrides/inventory/job-costs/
+  milestones/invoices/assignments/users/audit), IDOR across tasks/site-logs/
+  inventory, Google-authenticated-client parity (M11 callback path → identical
+  boundary), and a compact admin/procurement/supervisor role regression.
+- **Verification:** `pytest -q tests/test_client_portal.py` = 17 passed; full
+  suite = **223 passed**; frontend build/lint clean; ruff 2 / mypy 10 / oxlint
+  1 baselines unchanged; `git diff --check` clean. No migration (Alembic head
+  unchanged).
+- **Docs:** `docs/M6_IMPLEMENTATION_PLAN.md` (plan) and
+  `docs/M6_IMPLEMENTATION_REVIEW.md` (review) created; CURRENT_STATE/ROADMAP
+  updated. Nothing committed.
+- **Remaining:** enable real Google clients only after the Phase 4 staging/gate
+  (P4.6) per the ROADMAP guardrail; frontend E2E tests remain P4.6.
+
+## 16. M12 — Dynamic Gantt & Dependency Scheduling (Aug 13, 2026)
+
+M12 implemented (not yet committed). Owner-approved decisions: push-only,
+forward-only, Finish-to-Start (`successor.start >= predecessor.end + 1
+calendar day`), minimum shift only, keep dates on dependency removal, single
+predecessor, calendar days, auto-recalculate on every task mutation, no
+recalculate endpoint, **no migration**, audit action `task_schedule_shift`,
+frontend refetch for shift info, timeline date editing, create-time scheduling.
+
+- **Backend:** `app/services/tasks.py` — pure deterministic `apply_schedule()`
+  (forward-only fixpoint, duration-preserving, idempotent, cycle-guarded);
+  wired into create/PATCH/delete in `api/v1/tasks.py` inside the existing
+  project row lock; every shifted dependent audited `task_schedule_shift`
+  (old/new dates + caused_by_task_id) in the same transaction. M7 validation
+  unchanged and still first.
+- **Frontend:** `ProjectTimeline.tsx` — dependency picker (create + per-task),
+  per-task start/end date editing, predecessor tag, transient "N tasks
+  shifted" notice; gated by existing `canWrite`; clients read-only.
+- **Tests:** `tests/test_task_scheduling.py` (21) — chains, fan-out,
+  forward/backward moves, duration/dependency changes, idempotency, audit,
+  RBAC/client 403, M7 regressions, and real two-session concurrency tests.
+  Full suite **223 → 244 passing**.
+- **Gates:** frontend build + lint clean (1 baseline warning); ruff 2 / mypy
+  10 / oxlint 1 baselines unchanged (delta gates PASS); `git diff --check`
+  clean. **No migration** (Alembic head `i7d8e9f0a1b2`).
+- **Smoke (live uvicorn + scratch Postgres, seeded users):** admin creates A/B
+  with B→A; moving A forward shifted B; C→B cascaded transitively; moving A
+  backward did not pull B/C; refresh persisted; client read-only (GET 200,
+  PATCH date + dependency 403); frontend dev server served 200. Not performed:
+  browser click-through and Google-authenticated client smoke.
+- **Docs:** `docs/M12_IMPLEMENTATION_PLAN.md` (plan, unchanged) and
+  `docs/M12_IMPLEMENTATION_REVIEW.md` (review). Nothing committed.

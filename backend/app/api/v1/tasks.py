@@ -28,6 +28,8 @@ from app.models.user import User, UserRole
 from app.schemas.task import TaskCreate, TaskRead, TaskUpdate
 from app.services.tasks import (
     CYCLE_DETAIL,
+    ScheduleShift,
+    apply_schedule,
     detect_dependency_cycle,
     get_project_tasks,
     predecessor_map,
@@ -38,6 +40,34 @@ from app.services.tasks import (
 router = APIRouter(prefix="/projects/{project_id}/tasks", tags=["tasks"])
 
 write_roles = require_role(UserRole.ADMIN, UserRole.SITE_SUPERVISOR)
+
+
+async def _audit_schedule_shifts(
+    db: AsyncSession, shifts: list[ScheduleShift], actor_id: uuid.UUID
+) -> None:
+    """Audit every automatically-shifted dependent (M12) in the same
+    transaction as the schedule change."""
+    for shift in shifts:
+        await record_audit(
+            db,
+            user_id=actor_id,
+            action="task_schedule_shift",
+            table_name="tasks",
+            record_id=str(shift.task_id),
+            changes={
+                "start_date": {
+                    "old": shift.old_start.isoformat(),
+                    "new": shift.new_start.isoformat(),
+                },
+                "end_date": {
+                    "old": shift.old_end.isoformat(),
+                    "new": shift.new_end.isoformat(),
+                },
+                "caused_by_task_id": (
+                    str(shift.caused_by_task_id) if shift.caused_by_task_id else None
+                ),
+            },
+        )
 
 
 async def _assert_can_write(db: AsyncSession, user: User, project_id: uuid.UUID) -> Project:
@@ -95,6 +125,12 @@ async def create_task(
         record_id=str(task.id),
         changes={"name": {"old": None, "new": task.name}},
     )
+
+    # M12: enforce Finish-to-Start over the whole project graph. A brand-new
+    # task may itself need its dates pushed forward to satisfy its chosen
+    # predecessor (owner decision D15).
+    shifts = apply_schedule(await get_project_tasks(db, project_id))
+    await _audit_schedule_shifts(db, shifts, user.id)
 
     await db.commit()
     await db.refresh(task)
@@ -158,6 +194,13 @@ async def update_task(
             changes=changes,
         )
 
+    # M12: recompute the schedule over the full project graph after the user's
+    # change and shift dependents (and transitively their dependents) forward
+    # only when Finish-to-Start is violated. Runs inside the same locked
+    # transaction; every shifted dependent is audited.
+    shifts = apply_schedule(await get_project_tasks(db, project_id))
+    await _audit_schedule_shifts(db, shifts, user.id)
+
     await db.commit()
     await db.refresh(task)
     return task
@@ -187,4 +230,11 @@ async def delete_task(
     )
 
     await db.delete(task)
+
+    # M12: deleting a task clears its dependents' edges (FK ON DELETE SET NULL)
+    # and keeps their dates (owner decision D5) — the schedule pass is a no-op
+    # here but keeps the invariant path uniform.
+    shifts = apply_schedule(await get_project_tasks(db, project_id))
+    await _audit_schedule_shifts(db, shifts, user.id)
+
     await db.commit()

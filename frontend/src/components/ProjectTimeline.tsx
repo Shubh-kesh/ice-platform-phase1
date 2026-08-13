@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Loader2 } from "lucide-react";
+import { Plus, Trash2, Loader2, ArrowRight } from "lucide-react";
 import { api } from "../lib/api";
 import type { ProjectTask, TaskCreateInput, TaskStatus } from "../types";
 
@@ -15,10 +15,17 @@ function daysBetween(a: string, b: string) {
   return Math.max(1, Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86_400_000));
 }
 
+type TaskDates = { start: string; end: string };
+
 /**
  * A minimal Gantt view — each task renders as a proportional bar positioned
  * within the project's overall date span. Good enough to see sequencing and
  * progress at a glance without pulling in a charting library for Phase 2.
+ *
+ * M12: dependency picker (create + per-task), per-task start/end date editing,
+ * a predecessor tag, and a transient "N tasks shifted" notice when a schedule
+ * change cascades to dependents. All write controls remain gated by `canWrite`;
+ * clients keep the read-only view.
  */
 export function ProjectTimeline({
   projectId,
@@ -33,7 +40,16 @@ export function ProjectTimeline({
 }) {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: "", start_date: "", end_date: "" });
+  const [form, setForm] = useState<{ name: string; start_date: string; end_date: string; depends_on_id: string }>(
+    { name: "", start_date: "", end_date: "", depends_on_id: "" }
+  );
+  const [notice, setNotice] = useState<string | null>(null);
+
+  // Snapshot machinery for the "N tasks shifted" notice: dates at the moment a
+  // mutation starts, compared to the refetched list after it succeeds.
+  const prevDatesRef = useRef<Record<string, TaskDates>>({});
+  const pendingCompareRef = useRef(false);
+  const lastEditedRef = useRef<string | null>(null);
 
   const { data: tasks, isLoading } = useQuery({
     queryKey: ["tasks", projectId],
@@ -43,20 +59,55 @@ export function ProjectTimeline({
     },
   });
 
+  function snapshotDates() {
+    prevDatesRef.current = Object.fromEntries(
+      (tasks ?? []).map((t) => [t.id, { start: t.start_date, end: t.end_date }])
+    );
+  }
+
+  useEffect(() => {
+    if (!pendingCompareRef.current || !tasks) return;
+    pendingCompareRef.current = false;
+    const shifted = tasks.filter(
+      (t) =>
+        t.id !== lastEditedRef.current &&
+        prevDatesRef.current[t.id] &&
+        (prevDatesRef.current[t.id].start !== t.start_date ||
+          prevDatesRef.current[t.id].end !== t.end_date)
+    );
+    if (shifted.length > 0) {
+      setNotice(
+        `${shifted.length} task${shifted.length === 1 ? "" : "s"} shifted to keep dependencies valid`
+      );
+      const timer = window.setTimeout(() => setNotice(null), 6000);
+      return () => window.clearTimeout(timer);
+    }
+  }, [tasks]);
+
   const createTask = useMutation({
     mutationFn: async (payload: TaskCreateInput) => {
       await api.post(`/projects/${projectId}/tasks`, payload);
     },
+    onMutate: () => {
+      lastEditedRef.current = null;
+      snapshotDates();
+      pendingCompareRef.current = true;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tasks", projectId] });
-      setForm({ name: "", start_date: "", end_date: "" });
+      setForm({ name: "", start_date: "", end_date: "", depends_on_id: "" });
       setShowForm(false);
     },
   });
 
   const updateTask = useMutation({
-    mutationFn: async ({ id, status, percent_complete }: { id: string; status?: TaskStatus; percent_complete?: number }) => {
-      await api.patch(`/projects/${projectId}/tasks/${id}`, { status, percent_complete });
+    mutationFn: async ({ id, fields }: { id: string; fields: Record<string, unknown> }) => {
+      await api.patch(`/projects/${projectId}/tasks/${id}`, fields);
+    },
+    onMutate: ({ id }) => {
+      lastEditedRef.current = id;
+      snapshotDates();
+      pendingCompareRef.current = true;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tasks", projectId] }),
   });
@@ -65,10 +116,16 @@ export function ProjectTimeline({
     mutationFn: async (id: string) => {
       await api.delete(`/projects/${projectId}/tasks/${id}`);
     },
+    onMutate: (id) => {
+      lastEditedRef.current = id;
+      snapshotDates();
+      pendingCompareRef.current = true;
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tasks", projectId] }),
   });
 
   const spanDays = daysBetween(projectStart, projectEnd);
+  const taskById = new Map((tasks ?? []).map((t) => [t.id, t]));
 
   return (
     <div className="rounded-md border border-ink-border bg-ink-surface p-5">
@@ -84,12 +141,23 @@ export function ProjectTimeline({
         )}
       </div>
 
+      {notice && (
+        <div className="mb-4 rounded-md border border-status-amber/30 bg-status-amber/10 px-3 py-2 text-xs text-status-amber">
+          {notice}
+        </div>
+      )}
+
       {showForm && (
         <form
           onSubmit={(e) => {
             e.preventDefault();
             if (!form.name || !form.start_date || !form.end_date) return;
-            createTask.mutate(form);
+            createTask.mutate({
+              name: form.name,
+              start_date: form.start_date,
+              end_date: form.end_date,
+              depends_on_id: form.depends_on_id || null,
+            });
           }}
           className="mb-4 grid grid-cols-1 gap-2 rounded-md border border-dashed border-ink-border p-3 sm:grid-cols-4"
         >
@@ -111,6 +179,18 @@ export function ProjectTimeline({
             value={form.end_date}
             onChange={(e) => setForm({ ...form, end_date: e.target.value })}
           />
+          <select
+            value={form.depends_on_id}
+            onChange={(e) => setForm({ ...form, depends_on_id: e.target.value })}
+            className="rounded border border-ink-border bg-ink px-2 py-1.5 text-sm text-paper"
+          >
+            <option value="">No dependency</option>
+            {(tasks ?? []).map((t) => (
+              <option key={t.id} value={t.id}>
+                After: {t.name}
+              </option>
+            ))}
+          </select>
           <button
             type="submit"
             disabled={createTask.isPending}
@@ -141,11 +221,20 @@ export function ProjectTimeline({
             const leftPct = Math.min(100, (offsetDays / spanDays) * 100);
             const widthPct = Math.min(100 - leftPct, (durationDays / spanDays) * 100);
             const status = STATUS_CONFIG[task.status];
+            const predecessor = task.depends_on_id ? taskById.get(task.depends_on_id) : null;
 
             return (
               <div key={task.id} className="group">
                 <div className="mb-1 flex items-center justify-between text-xs">
-                  <span className="text-paper">{task.name}</span>
+                  <span className="flex items-center gap-1.5 text-paper">
+                    {predecessor && (
+                      <span className="flex items-center gap-1 text-[10px] text-paper-faint">
+                        <ArrowRight size={10} />
+                        {predecessor.name}
+                      </span>
+                    )}
+                    {task.name}
+                  </span>
                   <div className="flex items-center gap-2">
                     <span className={`rounded px-1.5 py-0.5 text-[10px] ${status.className}`}>
                       {status.label}
@@ -174,11 +263,11 @@ export function ProjectTimeline({
                   </div>
                 </div>
                 {canWrite && (
-                  <div className="mt-1 flex items-center gap-2">
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
                     <select
                       value={task.status}
                       onChange={(e) =>
-                        updateTask.mutate({ id: task.id, status: e.target.value as TaskStatus })
+                        updateTask.mutate({ id: task.id, fields: { status: e.target.value as TaskStatus } })
                       }
                       className="rounded border border-ink-border bg-ink px-1.5 py-0.5 text-[11px] text-paper-muted"
                     >
@@ -194,10 +283,44 @@ export function ProjectTimeline({
                       max={100}
                       value={task.percent_complete}
                       onChange={(e) =>
-                        updateTask.mutate({ id: task.id, percent_complete: Number(e.target.value) })
+                        updateTask.mutate({ id: task.id, fields: { percent_complete: Number(e.target.value) } })
                       }
-                      className="h-1 flex-1 accent-blueprint-400"
+                      className="h-1 w-24 accent-blueprint-400"
                     />
+                    <input
+                      type="date"
+                      aria-label="Start date"
+                      value={task.start_date}
+                      onChange={(e) =>
+                        updateTask.mutate({ id: task.id, fields: { start_date: e.target.value } })
+                      }
+                      className="rounded border border-ink-border bg-ink px-1.5 py-0.5 text-[11px] text-paper-muted"
+                    />
+                    <input
+                      type="date"
+                      aria-label="End date"
+                      value={task.end_date}
+                      onChange={(e) =>
+                        updateTask.mutate({ id: task.id, fields: { end_date: e.target.value } })
+                      }
+                      className="rounded border border-ink-border bg-ink px-1.5 py-0.5 text-[11px] text-paper-muted"
+                    />
+                    <select
+                      value={task.depends_on_id ?? ""}
+                      onChange={(e) =>
+                        updateTask.mutate({ id: task.id, fields: { depends_on_id: e.target.value || null } })
+                      }
+                      className="rounded border border-ink-border bg-ink px-1.5 py-0.5 text-[11px] text-paper-muted"
+                    >
+                      <option value="">No dependency</option>
+                      {tasks
+                        .filter((t) => t.id !== task.id)
+                        .map((t) => (
+                          <option key={t.id} value={t.id}>
+                            After: {t.name}
+                          </option>
+                        ))}
+                    </select>
                   </div>
                 )}
               </div>
