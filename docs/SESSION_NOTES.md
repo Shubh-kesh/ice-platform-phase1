@@ -506,3 +506,49 @@ frontend refetch for shift info, timeline date editing, create-time scheduling.
   browser click-through and Google-authenticated client smoke.
 - **Docs:** `docs/M12_IMPLEMENTATION_PLAN.md` (plan, unchanged) and
   `docs/M12_IMPLEMENTATION_REVIEW.md` (review). Nothing committed.
+
+## 17. M13 — Notifications & Alerts (Aug 13, 2026)
+
+M13 implemented (not yet committed). In-app, event-driven notifications; no
+Phase 4 infra, no workers, no email.
+
+- **Migration:** `j8e9f0a1b2c3_m13_notifications.py` (additive `notifications`
+  table: user FK CASCADE, project FK CASCADE nullable, type/title/body/link,
+  read_at, created_at; indexes `(user_id, read_at)` and `(user_id, created_at)`).
+  Type is a constrained String (app-level enum) to avoid the repo's documented
+  native-enum alembic pitfall. Upgrade/downgrade/replay green; head updated in
+  `test_migrations.py`.
+- **Service:** `app/services/notifications.py` — `create_notifications`,
+  `project_role_recipient_ids`, `global_role_recipient_ids`, and typed wrappers
+  per event; all inserts happen in the caller's transaction (atomic with the
+  event).
+- **API:** `app/api/v1/notifications.py` — `GET /notifications`,
+  `GET /notifications/unread-count`, `POST /notifications/read-all`,
+  `POST /notifications/{id}/read`; user-scoped (ownership from the auth
+  dependency; another user's id → 404).
+- **Hooks:** tasks schedule shift → assigned supervisors + admins; invoicing
+  `issue` → assigned client + admins; inventory low-stock **crossing**
+  (old > threshold and new <= threshold) → procurement + admins; assignment →
+  the assigned user.
+- **Recipient-rule correction (deviation):** procurement managers are NOT
+  project-assignable (`_ASSIGNABLE_ROLES = supervisor, client`) and have global
+  project visibility — low-stock alerts use **global** procurement resolution
+  (all active procurement + admins), not project-assigned.
+- **Dedupe/atomicity:** low-stock only on the crossing (no stacking); M8
+  idempotent replay short-circuits before hooks (no duplicates); rolled-back
+  events create no notifications (tested).
+- **Tests:** `tests/test_notifications.py` (12) — event hooks, recipients,
+  ownership/IDOR, read-state/idempotent read/mark-all, transaction rollback,
+  M8 replay dedupe, real two-session concurrency. Full suite **244 → 256
+  passing**; migration chain green through `j8e9f0a1b2c3`.
+- **Gates:** frontend build + lint clean (1 baseline warning); ruff 2 / mypy
+  10 / oxlint 1 baselines unchanged (delta gates PASS); `git diff --check`
+  clean.
+- **Smoke (live uvicorn + scratch Postgres, seeded users):** schedule shift →
+  supervisor+admin notifications; invoice issue → client notification;
+  low-stock crossing → procurement notification (deduped); assignment →
+  user notification; unread count + mark-read (idempotent) + mark-all; admin
+  reading another user's notification → 404; refresh persists. Frontend served
+  200. (Hit the live login rate limit during scripting — expected behavior.)
+- **Docs:** `docs/M13_IMPLEMENTATION_PLAN.md` (plan, unchanged) and
+  `docs/M13_IMPLEMENTATION_REVIEW.md` (review). Nothing committed.

@@ -26,6 +26,7 @@ from app.models.project import Project
 from app.models.task import Task
 from app.models.user import User, UserRole
 from app.schemas.task import TaskCreate, TaskRead, TaskUpdate
+from app.services.notifications import notify_schedule_shift
 from app.services.tasks import (
     CYCLE_DETAIL,
     ScheduleShift,
@@ -131,6 +132,9 @@ async def create_task(
     # predecessor (owner decision D15).
     shifts = apply_schedule(await get_project_tasks(db, project_id))
     await _audit_schedule_shifts(db, shifts, user.id)
+    if shifts:
+        # M13: in-app alert to the project team when the schedule changed.
+        await notify_schedule_shift(db, project_id, len(shifts))
 
     await db.commit()
     await db.refresh(task)
@@ -200,6 +204,9 @@ async def update_task(
     # transaction; every shifted dependent is audited.
     shifts = apply_schedule(await get_project_tasks(db, project_id))
     await _audit_schedule_shifts(db, shifts, user.id)
+    if shifts:
+        # M13: in-app alert to the project team when the schedule changed.
+        await notify_schedule_shift(db, project_id, len(shifts))
 
     await db.commit()
     await db.refresh(task)

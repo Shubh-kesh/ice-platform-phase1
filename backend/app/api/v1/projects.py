@@ -44,6 +44,7 @@ from app.services.health import (
 )
 from app.services.projects import generate_project_code
 from app.services.idempotency import IdempotencyGuard
+from app.services.notifications import notify_project_assigned
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -720,6 +721,9 @@ async def assign_user_to_project(
         record_id=str(project_id),
         changes={"user_id": {"old": None, "new": str(payload.user_id)}},
     )
+
+    # M13: notify the newly assigned supervisor/client, atomically with the grant.
+    await notify_project_assigned(db, project_id, payload.user_id, project.name)
 
     await db.commit()
     return user

@@ -1,5 +1,6 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from "axios";
 import type {
+  AppNotification,
   BillingMilestone,
   BillingMilestoneCreateInput,
   BillingMilestoneUpdateInput,
@@ -136,6 +137,30 @@ export async function updateUser(
 ): Promise<User> {
   const { data } = await api.patch<User>(`/users/${userId}`, input);
   return data;
+}
+
+// --- Phase 3 M13: in-app notifications ---------------------------------------
+
+export async function listNotifications(
+  unreadOnly = false
+): Promise<AppNotification[]> {
+  const { data } = await api.get<AppNotification[]>("/notifications", {
+    params: unreadOnly ? { unread_only: true } : {},
+  });
+  return data;
+}
+
+export async function getUnreadNotificationCount(): Promise<number> {
+  const { data } = await api.get<{ count: number }>("/notifications/unread-count");
+  return data.count;
+}
+
+export async function markNotificationRead(id: string): Promise<void> {
+  await api.post(`/notifications/${id}/read`);
+}
+
+export async function markAllNotificationsRead(): Promise<void> {
+  await api.post("/notifications/read-all");
 }
 
 export async function getProjects(includeArchived = false): Promise<Project[]> {

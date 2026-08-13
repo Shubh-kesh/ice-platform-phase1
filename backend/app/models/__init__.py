@@ -17,6 +17,7 @@ from app.models.finance import (
 from app.models.health import HealthOverride, HealthOverrideTarget, HealthOverrideValue
 from app.models.idempotency import IdempotencyRecord
 from app.models.refresh_session import RefreshSession
+from app.models.notification import Notification, NotificationType
 
 __all__ = [
     "User",
@@ -45,4 +46,6 @@ __all__ = [
     "HealthOverrideValue",
     "IdempotencyRecord",
     "RefreshSession",
+    "Notification",
+    "NotificationType",
 ]

@@ -10,6 +10,7 @@ from app.api.v1 import (
     inventory,
     finance,
     invoicing,
+    notifications,
 )
 
 api_router = APIRouter()
@@ -22,3 +23,4 @@ api_router.include_router(site_logs.router)
 api_router.include_router(inventory.router)
 api_router.include_router(finance.router)
 api_router.include_router(invoicing.router)
+api_router.include_router(notifications.router)

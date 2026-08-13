@@ -65,6 +65,7 @@ from app.schemas.invoice import (
     InvoiceCreate,
     InvoiceRead,
 )
+from app.services.notifications import notify_invoice_issued
 from app.services.idempotency import IdempotencyGuard
 from app.services.invoicing import (
     default_due_date,
@@ -597,6 +598,9 @@ async def issue_invoice(
             "issued_by": {"old": None, "new": str(admin.id)},
         },
     )
+    # M13: notify the assigned client (a payment request) + admins, atomically
+    # with the issue.
+    await notify_invoice_issued(db, project_id, invoice.invoice_number)
     await db.commit()
     await db.refresh(invoice)
     _attach_read_fields(invoice, project)

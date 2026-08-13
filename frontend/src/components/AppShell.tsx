@@ -9,6 +9,7 @@ import {
   Building2,
 } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
+import { NotificationsBell } from "./NotificationsBell";
 import type { UserRole } from "../types";
 
 const ROLE_LABEL: Record<UserRole, string> = {
@@ -109,9 +110,12 @@ export function AppShell({ children }: { children: ReactNode }) {
               })}
             </p>
           </div>
-          <span className="rounded border border-ink-border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-paper-muted">
-            {import.meta.env.MODE}
-          </span>
+          <div className="flex items-center gap-3">
+            <NotificationsBell />
+            <span className="rounded border border-ink-border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-paper-muted">
+              {import.meta.env.MODE}
+            </span>
+          </div>
         </header>
         <main className="p-6">{children}</main>
       </div>

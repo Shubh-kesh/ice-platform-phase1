@@ -42,6 +42,7 @@ from app.schemas.inventory import (
 )
 from app.services.idempotency import IdempotencyGuard
 from app.services.inventory import MOVEMENT_SIGN, reconcile_project_inventory
+from app.services.notifications import notify_low_stock
 
 router = APIRouter(prefix="/projects/{project_id}/inventory", tags=["inventory"])
 
@@ -102,6 +103,13 @@ async def create_inventory_item(
         record_id=str(item.id),
         changes={"name": {"old": None, "new": item.name}},
     )
+
+    # M13: an item created at/below its reorder threshold is an initial
+    # low-stock crossing -> notify procurement + admins (atomic with create).
+    if item.reorder_threshold is not None and item.quantity_on_hand <= item.reorder_threshold:
+        await notify_low_stock(
+            db, project_id, item.name, item.unit, float(item.quantity_on_hand)
+        )
 
     await db.commit()
     await db.refresh(item)
@@ -169,7 +177,8 @@ async def record_movement(
     assert_project_writable(project)  # ARCHIVED projects are read-only
 
     signed_quantity = payload.quantity * MOVEMENT_SIGN[payload.movement_type]
-    new_balance = float(item.quantity_on_hand) + signed_quantity
+    old_balance = float(item.quantity_on_hand)
+    new_balance = old_balance + signed_quantity
     if new_balance < 0:
         raise HTTPException(
             status_code=400,
@@ -197,6 +206,12 @@ async def record_movement(
             "quantity_on_hand": {"old": float(item.quantity_on_hand) - signed_quantity, "new": new_balance}
         },
     )
+
+    # M13: notify only on a genuine *crossing* (old > threshold and new <=
+    # threshold) so repeated movements/retries never stack duplicate alerts.
+    threshold = item.reorder_threshold
+    if threshold is not None and old_balance > threshold and new_balance <= threshold:
+        await notify_low_stock(db, project_id, item.name, item.unit, new_balance)
 
     await idem.finish(
         db, status_code=status.HTTP_201_CREATED, response_model=StockMovementRead, obj=movement

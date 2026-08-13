@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from tests.conftest import ADMIN_DATABASE_URL
 
 MIGRATION_DB_NAME = "ice_migration_test_db"
-HEAD_REVISION = "i7d8e9f0a1b2"
+HEAD_REVISION = "j8e9f0a1b2c3"
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -115,7 +115,7 @@ async def test_migration_chain_upgrade_downgrade_replayable():
         current = _alembic(["current"], cwd=BACKEND_DIR)
         assert HEAD_REVISION in current.stdout, current.stdout
 
-        for table in ("billing_milestones", "invoices", "refresh_sessions"):
+        for table in ("billing_milestones", "invoices", "refresh_sessions", "notifications"):
             assert await _table_exists(table), f"{table} missing after upgrade head"
         for column in ("google_sub", "google_email"):
             assert await _column_exists(column), f"users.{column} missing after upgrade head"
@@ -123,7 +123,7 @@ async def test_migration_chain_upgrade_downgrade_replayable():
         down = _alembic(["downgrade", "base"], cwd=BACKEND_DIR)
         assert down.returncode == 0, down.stderr or down.stdout
 
-        for table in ("billing_milestones", "invoices", "refresh_sessions"):
+        for table in ("billing_milestones", "invoices", "refresh_sessions", "notifications"):
             assert not await _table_exists(table), f"{table} not dropped on downgrade"
         for column in ("google_sub", "google_email"):
             assert not await _column_exists(column), f"users.{column} not dropped on downgrade"

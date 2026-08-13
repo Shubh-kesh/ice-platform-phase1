@@ -108,6 +108,25 @@ export interface TokenResponse {
   token_type: string;
 }
 
+// --- Phase 3 M13: in-app notifications ---
+
+export type NotificationType =
+  | "task_schedule_shift"
+  | "milestone_invoice_issued"
+  | "inventory_low_stock"
+  | "project_assigned";
+
+export interface AppNotification {
+  id: string;
+  project_id: string | null;
+  type: NotificationType;
+  title: string;
+  body: string;
+  link: string | null;
+  read_at: string | null;
+  created_at: string;
+}
+
 // --- Phase 3 M2: project assignments (admin) ---
 
 export interface AssignmentCreateInput {
