@@ -1,0 +1,5 @@
+# oxlint baseline — pre-existing warning at Phase 4 start (P4.1).
+# Keys are <path>:<line>:<rule>, relative to the frontend working directory.
+# Do NOT edit to mask a NEW warning; update only when a warning is genuinely
+# fixed (delete its line) or intentionally re-baselined with approval.
+src/lib/auth-context.tsx:100:react(only-export-components)

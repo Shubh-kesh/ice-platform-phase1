@@ -31,7 +31,7 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
   columns and unique Google-sub index applied in the Docker dev database.
 - **Deployment:** Docker + docker-compose (local dev). Multi-stage non-root Dockerfile, 4 gunicorn workers, healthcheck, migrations run on container start. A clean no-cache rebuild installs all runtime requirements, including `httpx==0.27.2`.
 - **Redis:** provisioned in compose, configured in settings, **never used by any code**.
-- **Not present:** separate services layer, repositories, queues/workers, caching, file storage, notifications, external integrations, monitoring, CI/CD, IaC.
+- **Not present:** separate services layer, repositories, queues/workers, caching, file storage, notifications, external integrations, monitoring, IaC.
 
 ## 2. Implemented modules
 
@@ -152,7 +152,7 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 - **Duplicated audit-pattern code:** the "build changes dict from `model_dump(exclude_unset=True)`" pattern is copy-pasted in `users.py:79`, `projects.py:91`, `tasks.py:138`, `inventory.py:111`.
 - **Dead code / unused dependencies:** `redis` and `tenacity` in requirements (never used); `GCP_PROJECT_ID` / `GCS_BUCKET_NAME` config stubs; legacy manual `timeline_health`/`budget_health`/`safety_health` columns (deprecated by M3, no longer API-settable, kept for DB compat).
 - **Inconsistent patterns:** `_get_item_or_404` vs `get_project_or_404`; per-module `write_roles`; inconsistent route shapes (`/audit/logs` vs flat collections).
-- **Lint/type debt is un-gated** (no CI).
+- **Lint/type debt is gated, not fixed:** Ruff (2), mypy (10) and oxlint (1) pre-existing findings are tracked in committed baselines and enforced as a CI delta gate (P4.1) — no NEW findings may be introduced; fixing the debt is triaged separately.
 - **Stale root documentation:** `QUICK_START.md`, `PHASE2_READY.md`, `IMPLEMENTATION_SUMMARY.txt`, `CRITICAL_FIXES_IMPLEMENTED.md` contradict the code (e.g., claim SQLite in-memory tests; code uses real Postgres; "15+ tests" vs 33) and overstate readiness.
 - **Unused `ip_address` parameter** in `record_audit` is a misleading API.
 
@@ -185,13 +185,14 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 - **Coverage: ~75%** overall (pytest-cov). Lowest areas: inventory `api/v1/inventory.py` 39%, `projects.py` 42%, `tasks.py` 42%.
 - **Frontend tests: none** (no vitest/RTL config or tests).
 - **Missing critical tests:** project CRUD/PATCH RBAC/budget-validation edge cases beyond the lifecycle/health suites; client read-isolation (archived-404 is covered; assigned-client non-archived read is not); audit endpoint (`/audit/logs`) untested; frontend tests remain absent.
-- **Tooling:** pytest + pytest-asyncio + httpx; tests use a disposable `ice_test_db` Postgres database created/dropped per test. Ruff and mypy available in dev deps but **not CI-gated**.
+- **Tooling:** pytest + pytest-asyncio + httpx; tests use a disposable `ice_test_db` Postgres database created/dropped per test. Ruff and mypy available in dev deps. **CI-gated since Phase 4 P4.1** (`.github/workflows/ci.yml`): ruff, mypy, pytest (incl. the Alembic migration-chain test), frontend build + oxlint, and `git diff --check` run on every PR and push; pre-existing findings (Ruff 2, Mypy 10, oxlint 1) are captured in `.ci/baseline_*.txt` and enforced via a delta checker (`scripts/ci_quality.py`) so only NEW findings fail the gate.
 
 ## 11. Production readiness
 
 **Not ready for production.**
 - **Good:** multi-stage non-root Dockerfile with healthcheck; compose runs migrations on start; env-driven config; uniform 500 -> JSON error shape; request-latency logging.
-- **Missing:** CI/CD (`.github/workflows/` empty); IaC (`infra/terraform/` empty); secrets management; structured logging/request IDs; metrics, tracing, alerting; backups/DR (single compose volume); multi-worker-safe rate limiting; automated migration application in prod; performance load-test at 15-project scale.
+- **In progress (Phase 4):** P4.1 CI/CD quality gates shipped (`ci.yml`); P4.2–P4.6 (IaC, secrets, observability, hardening, staging/gate) remain planned.
+- **Missing:** IaC (`infra/terraform/` empty); secrets management; structured logging/request IDs; metrics, tracing, alerting; backups/DR (single compose volume); multi-worker-safe rate limiting; automated migration application in prod; performance load-test at 15-project scale.
 
 ## 12. AI/ML readiness
 

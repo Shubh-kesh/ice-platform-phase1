@@ -1,0 +1,6 @@
+# Ruff baseline — pre-existing findings at Phase 4 start (P4.1).
+# Keys are <path>:<line>:<code>, relative to the backend working directory.
+# Do NOT edit to mask a NEW error; update only when a finding is genuinely
+# fixed (then delete its line) or intentionally re-baselined with approval.
+app/api/v1/audit.py:12:F401
+app/models/inventory.py:5:F401

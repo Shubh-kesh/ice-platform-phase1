@@ -410,3 +410,38 @@ admin Users panel in Command Center.
   Postgres, secrets management, structured logging, backups, Redis-backed
   rate limiting). M11 is the real-user rollout gate; Phase 4 rails must land
   before real clients use Google Sign-In.
+
+## 14. P4.1 — CI/CD & Automated Quality Gates (Aug 12, 2026)
+
+Phase 4 milestone P4.1 is implemented (not yet committed). Implements the
+ROADMAP Phase 4 CI/CD MUST.
+
+- **Workflow:** `.github/workflows/ci.yml` — runs on every `pull_request` and on
+  pushes to `claude-development` / `main` / `master` (plus manual dispatch).
+  Jobs: `backend` (Python 3.12 — Docker parity; Postgres 16 + Redis 7 service
+  containers; `pip install -r requirements-dev.txt`; ruff gate; mypy gate;
+  `pytest -q` including the Alembic migration-chain test; `git diff --check`)
+  and `frontend` (Node 22; `npm ci`; `npm run build`; oxlint gate).
+- **Baseline mechanism:** pre-existing findings are committed in
+  `.ci/baseline_ruff.txt` (2), `.ci/baseline_mypy.txt` (10), and
+  `.ci/baseline_oxlint.txt` (1). `scripts/ci_quality.py` runs each tool and
+  compares its findings to the baseline — the gate passes when all current
+  findings are already in the baseline and FAILS on any NEW finding (delta
+  detection). Resolving baseline debt is never required to pass; adding new
+  debt is never tolerated silently. A tool that fails with zero findings is
+  itself a hard failure (no silent pass).
+- **Security:** `permissions: contents: read`; `persist-credentials: false`;
+  pinned actions (`checkout@v4`, `setup-python@v5`, `setup-node@v4`); no
+  secrets in the workflow; no deploy steps.
+- **Verified locally:** ruff/mypy/oxlint gates pass at baseline (new=0);
+  deliberate NEW errors in each tool correctly fail the gate (exit 1) and are
+  reported; full backend suite `pytest -q` = **213 passed** (incl. migration
+  chain); frontend `npm run build` + `npm run lint` pass (1 baseline warning).
+  `ci.yml` validates as YAML.
+- **Not done / deferred:** live GitHub run (requires a push; `gh`/actionlint
+  not installed locally) — a post-approval run is the remaining verification;
+  coverage gate (pytest-cov not installed locally) deferred to a later P4
+  milestone; frontend unit tests deferred (P2).
+- **Local Postgres note:** Docker daemon was unavailable during verification;
+  the Homebrew `postgresql@18` service (with the `ice_user` role) was started
+  to run the suite.

@@ -1,0 +1,133 @@
+# CI — automated quality gates for the ICE platform (Phase 4, P4.1).
+#
+# Runs on every pull request and on pushes to the development branch and
+# main/master. The workflow enforces the repository quality baseline:
+#   - Backend: pytest (incl. the Alembic migration chain test), ruff, mypy,
+#     git diff --check
+#   - Frontend: npm ci, tsc+vite build, oxlint
+#   - Baseline policy: ruff (2), mypy (10) and oxlint (1) pre-existing findings
+#     are captured in .ci/baseline_*.txt. The gates FAIL only on NEW findings
+#     (delta detection via scripts/ci_quality.py); resolving baseline debt is
+#     never required to pass, and new debt is never silently tolerated.
+#
+# Least-privilege: read-only GitHub token, no secrets, no deploy steps.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - claude-development
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend gates
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ice_user
+          POSTGRES_PASSWORD: ice_pass
+          POSTGRES_DB: ice_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ice_user -d ice_db"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      POSTGRES_SERVER: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ice_user
+      POSTGRES_PASSWORD: ice_pass
+      POSTGRES_DB: ice_db
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements-dev.txt
+
+      - name: Ruff baseline check
+        working-directory: backend
+        run: python ../scripts/ci_quality.py --kind ruff --baseline ../.ci/baseline_ruff.txt --cmd "ruff check app tests --output-format=concise"
+
+      - name: Mypy baseline check
+        working-directory: backend
+        run: python ../scripts/ci_quality.py --kind mypy --baseline ../.ci/baseline_mypy.txt --cmd "mypy app"
+
+      - name: Backend tests (incl. Alembic migration chain)
+        working-directory: backend
+        run: pytest -q
+
+      - name: git diff --check
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base" ]; then base="${{ github.event.before }}"; fi
+          if [ -n "$base" ] && [ "$base" != "0000000000000000000000000000000000000000" ]; then
+            git diff --check "$base"...HEAD
+          else
+            git diff --check HEAD
+          fi
+
+  frontend:
+    name: Frontend gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python (shared CI script)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build (tsc + vite)
+        working-directory: frontend
+        run: npm run build
+
+      - name: oxlint baseline check
+        working-directory: frontend
+        run: python ../scripts/ci_quality.py --kind oxlint --baseline ../.ci/baseline_oxlint.txt --cmd "npx --no-install oxlint"

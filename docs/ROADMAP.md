@@ -136,7 +136,7 @@ Ordering rationale:
 **Business value:** Low-to-medium direct value, but **gating**: without this, nothing above is safely usable with real money at risk.
 
 **Features**
-- **MUST:** CI/CD — GitHub Actions: lint (ruff + oxlint) + typecheck (mypy/tsc) + `pytest` + coverage gate + frontend build; PR/merge gates.
+- **MUST:** CI/CD — GitHub Actions: lint (ruff + oxlint) + typecheck (mypy/tsc) + `pytest` + coverage gate + frontend build; PR/merge gates. *(P4.1 DONE: `.github/workflows/ci.yml` runs ruff/mypy/pytest incl. migration chain, `git diff --check`, frontend build + oxlint on every PR and push; pre-existing lint/type findings enforced via committed baselines + a delta gate. Coverage gate deferred to a later P4 milestone.)*
 - **MUST:** IaC + deploy — Terraform (or Cloud Run YAML) for backend + managed Postgres + secrets.
 - **MUST:** Secrets management (Secret Manager) — no secrets in compose/env files.
 - **MUST:** Structured logging (request IDs, JSON to Cloud Logging), error tracking (Sentry or equivalent), uptime + latency alerting.
@@ -174,7 +174,7 @@ Ordering rationale:
 **AI/ML considerations:** ensure image/photos (Phase 6) and structured events (Phase 3 finance) are being stored in aggreable form — this is the data-collection foundation for Part 13 (AI).
 
 **Acceptance criteria**
-- A PR that fails ruff, mypy, tsc, or tests is blocked.
+- A PR that fails ruff, mypy, tsc, or tests is blocked. *(P4.1: enforced on GitHub Actions with baseline-aware gates.)*
 - Deploy is scripted end-to-end from empty Terraform state; secrets never in repo.
 - Rate limit of 5/min holds per-user behind an LB with 4 workers.
 - Backup restore verified in a controlled env; alerts fire on 5xx bursts.
