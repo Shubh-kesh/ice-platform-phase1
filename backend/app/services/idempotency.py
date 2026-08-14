@@ -181,12 +181,17 @@ async def claim_idempotency(
     operation = _operation_route(request)
     fingerprint = await _fingerprint(request)
 
-    existing = await _find_record(db, user.id, operation, key)
+    # Snapshot the actor id up-front: the loser of a concurrent same-key race
+    # rolls back below, which expires the session's loaded objects — re-reading
+    # user.id there would lazy-load synchronously and raise MissingGreenlet.
+    actor_id = user.id
+
+    existing = await _find_record(db, actor_id, operation, key)
     if existing is not None:
         return _conflict_or_replay(existing, fingerprint)
 
     claim = _new_claim(
-        actor_id=user.id, idempotency_key=key, operation=operation, fingerprint=fingerprint
+        actor_id=actor_id, idempotency_key=key, operation=operation, fingerprint=fingerprint
     )
     db.add(claim)
     try:
@@ -196,7 +201,7 @@ async def claim_idempotency(
         # our SELECT and INSERT. Its claim is now committed; roll back the
         # failed insert and resolve against the winner.
         await db.rollback()
-        winner = await _find_record(db, user.id, operation, key)
+        winner = await _find_record(db, actor_id, operation, key)
         if winner is None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,

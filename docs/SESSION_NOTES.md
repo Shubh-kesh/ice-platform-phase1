@@ -552,3 +552,68 @@ Phase 4 infra, no workers, no email.
   200. (Hit the live login rate limit during scripting — expected behavior.)
 - **Docs:** `docs/M13_IMPLEMENTATION_PLAN.md` (plan, unchanged) and
   `docs/M13_IMPLEMENTATION_REVIEW.md` (review). Nothing committed.
+
+## M14 — Vendors & Purchase Orders (Aug 14, 2026)
+
+First Phase 5 milestone: vendor master data + project-scoped purchase orders
+with line items and an audited lifecycle. Committed? No (review in progress).
+
+- **Plan:** `docs/M14_IMPLEMENTATION_PLAN.md` (canonical, unchanged).
+- **Migration:** `k4c5d6e7f8a9_m14_vendors_purchase_orders.py` (additive:
+  `vendors`, `purchase_orders`, `po_lines`, `POStatus` enum; no existing-table
+  changes). Follows the M5 enum lesson: `po_status` created with checkfirst and
+  enum-backed columns added via `op.add_column`; `po_lines.cost_code` reuses the
+  M4 `cost_code` type via `postgresql.ENUM(create_type=False)`. Downgrade drops
+  the three tables (constraints/indexes first) then the `po_status` enum.
+  Upgrade/downgrade/replay green; `test_migrations.py` head →
+  `k4c5d6e7f8a9`.
+- **Models:** `app/models/vendor.py` (`Vendor`, unique name,
+  `ix_vendors_is_active`), `app/models/purchase_order.py` (`PurchaseOrder`,
+  `POLine`, `POStatus`); exported from `models/__init__.py`.
+- **Schemas:** `app/schemas/vendor.py` (Create/Update/Read with EmailStr),
+  `app/schemas/purchase_order.py` (line/PO create/update/reject/read; transient
+  `project_code`, `vendor_name`, `subtotal`, `tax_amount`, `line_total`).
+- **Service:** `app/services/purchase_orders.py` — Decimal `line_total`
+  (`ROUND_HALF_UP` 2dp), `tax_amount`, `po_total`, `po_subtotal_from_lines`,
+  `refresh_po_total` (recomputes the denormalized `total_amount` in-txn),
+  `po_number_for`, `next_po_seq` (called under the project row lock).
+- **API:** `app/api/v1/vendors.py` (`GET/POST/PATCH /vendors`, 409 on duplicate
+  name, POST idempotency-protected) and `app/api/v1/purchase_orders.py`
+  (CRUD + header PATCH + submit/approve/reject/revise/resubmit/cancel + line
+  add/edit/delete; approve/reject admin-only, APPROVED-cancel admin-only;
+  POST create + line-add idempotency-protected; every mutation project-lock →
+  PO-lock; totals recomputed in-txn). Routers appended to `api/v1/router.py`.
+- **Notifications:** 3 new `NotificationType` values (no migration) +
+  `notify_po_submitted` (→ active admins) / `notify_po_approved` /
+  `notify_po_rejected` (→ PO creator + active admins) in
+  `app/services/notifications.py`, fired atomically with the transition.
+- **M8 fix (pre-existing latent defect exposed by M14's required concurrent
+  same-key test):** `claim_idempotency` now snapshots `actor_id = user.id`
+  before the flush. The loser of a same-key race calls `db.rollback()` (which
+  expires loaded objects) and then re-read `user.id` — in async that sync
+  attribute access lazy-loads and raises MissingGreenlet. M8's own tests never
+  hit this branch (their winner commits fast enough); M14's same-key create
+  race does. Behavior unchanged; `test_idempotency.py` (14) still green.
+- **Tests:** `tests/test_vendors.py` (13), `tests/test_purchase_orders.py`
+  (31), `tests/test_notifications.py` +6 (18). Covers duplicate-vendor 409,
+  email 422, soft deactivation, RBAC matrix (S/C 403; approve/reject/APPROVED-
+  cancel admin-only), IDOR (cross-project PO/line 404), po_number sequencing +
+  uniqueness, totals/tax invariant + Decimal ROUND_HALF_UP, full state machine
+  (legal + illegal 400/422), COMPLETED frozen / ARCHIVED read-only, idempotent
+  replay + different-body 409 + freed-key-after-failure, audit rows per action,
+  notification recipients + atomicity + single-fire, and real two-session
+  concurrency (distinct po_numbers, single same-key create/one claim row,
+  total never drifting under concurrent line adds; add-line different-body 409). Full suite **256 → 307
+  passing**.
+- **Gates:** frontend `npm run build` + `npm run lint` clean (1 baseline
+  warning); ruff 2 / mypy 10 / oxlint 1 baselines unchanged (delta gates PASS);
+  `git diff --check` clean.
+- **Smoke (live uvicorn :8011 + scratch Postgres, 4 seeded role users + ACTIVE
+  project, 27/27 checks):** vendor create/duplicate-409/deactivate/reactivate;
+  S/C 403; PO create (nested lines + 18% tax) → `PO-PRJ-2026-9001-0001`,
+  total = Σ lines + tax; submit → admin `po_submitted`; procurement approve →
+  403; admin approve → creator+admin `po_approved`; procurement cancel APPROVED
+  → 403; admin cancel APPROVED → cancelled; reject→revise→edit→submit; line
+  edit recomputes total; idempotent create replay; archive → write 403, read OK.
+- **Docs:** `docs/CURRENT_STATE.md`, `docs/ROADMAP.md`, `docs/SESSION_NOTES.md`
+  (this entry), `docs/M14_IMPLEMENTATION_REVIEW.md`. Nothing committed.

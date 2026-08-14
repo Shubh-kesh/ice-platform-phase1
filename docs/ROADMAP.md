@@ -56,6 +56,7 @@ Execution order (M1/M2/M4 shipped):
 11. **M11 — Google Sign-In** (NEW) — DONE in the application; real-user rollout still waits for Phase 4 production rails and a configured Google OAuth client.
 12. **M12 — Dynamic Gantt & Dependency Scheduling** (NEW feature) — DONE. Push-only Finish-to-Start scheduling (`successor.start >= predecessor.end + 1`) auto-shifts dependents on task/dependency/date changes, transitively and idempotently, inside the project row lock; `task_schedule_shift` audit; timeline dependency picker + date editing + shift notice; clients read-only. No migration, no Phase 4 dependency. PRD §4.1.2 scheduling portion delivered; **vendor notifications** remain a separate gap.
 13. **M13 — Notifications & Alerts** (NEW feature) — DONE. In-app, event-driven notifications: M12 schedule shifts → supervisors+admins, M5 invoice issued (payment request) → client+admins, inventory low-stock crossing → procurement+admins, M2 assignment → user. User-scoped feed/unread-count/mark-read/read-all API + AppShell bell; atomic with the event; M8 replay-safe; one migration (`j8e9f0a1b2c3`). PRD §4.1.2 notification portion delivered in-app; **email/SMS/push delivery** and the **7-day low-stock forecast** remain deferred (Phase 5 / external-provider decisions).
+14. **M14 — Vendors & Purchase Orders** (Phase 5 first milestone) — DONE. Global vendor master data (unique name → 409, soft deactivation, admin+procurement) + project-scoped POs with line items, server-derived totals, `PO-{code}-{seq}` numbering, and the audited lifecycle DRAFT → submit → PENDING_APPROVAL → approve (admin) → APPROVED / reject (admin, reason) → REJECTED → revise | resubmit, plus cancel (A+P on DRAFT/PENDING; admin on APPROVED). Admin+procurement surface; supervisors/clients 403; M8 idempotency on PO/line create; M13 `po_submitted`/`po_approved`/`po_rejected` notifications. One migration (`k4c5d6e7f8a9`: `vendors`, `purchase_orders`, `po_lines`, `POStatus`). **Receiving/verification (M15), multi-location inventory (M16), demand forecast (M16) and vendor-performance tracking remain not started.** See `docs/M14_IMPLEMENTATION_REVIEW.md`.
 
 Ordering rationale:
 - **M10 before M3 and M5:** computed health and milestone invoicing must operate on a lifecycle-aware project universe (only ACTIVE compute health / generate invoices). Building them on the current seed-driven status model would force rework when lifecycle lands. Similarly, invoicing must not fire on COMPLETED/ARCHIVED projects.
@@ -187,15 +188,17 @@ Ordering rationale:
 
 **Goal:** The procurement pillar: purchase orders, delivery verification, and inventory spanning warehouse → transit → site with schedule-driven restocking.
 
+**Status (Aug 14, 2026):** the first milestone (**M14 — Vendors + Purchase Orders**, the "vendor entity + PO entity + PO lifecycle + approval workflow" MUST/SHOULD items below) is DONE and test-pinned; **delivery verification, the location dimension, and the demand forecast are NOT started** (M15/M16). Vendor performance tracking (on-time %, price) is blocked on M15 delivery data.
+
 **Business value:** High — this is where material spend is controlled; PO verification prevents paying for unverified goods; 3-location tracking reduces stockouts/misplacement across 15 sites.
 
 **Features**
-- **MUST:** Vendor entity (name/contact/payment terms) + vendor performance tracking (on-time %, price).
-- **MUST:** Purchase Order entity (vendor, lines, quantities, project, status) + PO lifecycle.
-- **MUST:** Delivery verification — QR-code scan **or** photo-verified receipt against PO lines; verified receipt releases stock into inventory and triggers cost entries.
-- **MUST:** Location dimension: `warehouse` / `transit` / `site` for inventory; transfers between locations recorded as movements.
-- **MUST:** Low-stock **forecast** alerts using next-7-days-scheduled demand (from tasks + BOQ/BOM) rather than static thresholds.
-- **SHOULD:** Approval workflow: Procurement creates PO → (optional) Admin approve → receive.
+- **MUST:** Vendor entity (name/contact/payment terms) + vendor performance tracking (on-time %, price). — *vendor master data DONE (M14); performance tracking pending (needs M15 delivery data)*
+- **MUST:** Purchase Order entity (vendor, lines, quantities, project, status) + PO lifecycle. — *DONE (M14)*
+- **MUST:** Delivery verification — QR-code scan **or** photo-verified receipt against PO lines; verified receipt releases stock into inventory and triggers cost entries. — *NOT STARTED (M15)*
+- **MUST:** Location dimension: `warehouse` / `transit` / `site` for inventory; transfers between locations recorded as movements. — *NOT STARTED (M16)*
+- **MUST:** Low-stock **forecast** alerts using next-7-days-scheduled demand (from tasks + BOQ/BOM) rather than static thresholds. — *NOT STARTED (M16; needs a Phase 4 worker)*
+- **SHOULD:** Approval workflow: Procurement creates PO → (optional) Admin approve → receive. — *approval workflow DONE (M14, mandatory — no auto-approve bypass)*
 - **NICE TO HAVE:** Cross-project inventory roll-up view for Procurement.
 
 **Dependencies:** Phase 3 (correct inventory semantics, cost-code integration), Phase 4 (worker for demand forecast).

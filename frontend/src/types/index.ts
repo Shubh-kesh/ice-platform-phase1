@@ -114,7 +114,10 @@ export type NotificationType =
   | "task_schedule_shift"
   | "milestone_invoice_issued"
   | "inventory_low_stock"
-  | "project_assigned";
+  | "project_assigned"
+  | "po_submitted"
+  | "po_approved"
+  | "po_rejected";
 
 export interface AppNotification {
   id: string;
@@ -414,4 +417,128 @@ export interface InvoiceCreateInput {
   billing_milestone_id: string;
   due_date?: string | null;
   notes?: string | null;
+}
+
+// --- Phase 5 M14: vendors + purchase orders ---
+
+export interface Vendor {
+  id: string;
+  name: string;
+  contact_name: string | null;
+  email: string | null;
+  phone: string | null;
+  payment_terms: string | null;
+  address: string | null;
+  is_active: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VendorCreateInput {
+  name: string;
+  contact_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  payment_terms?: string | null;
+  address?: string | null;
+  notes?: string | null;
+}
+
+export interface VendorUpdateInput {
+  name?: string;
+  contact_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  payment_terms?: string | null;
+  address?: string | null;
+  is_active?: boolean;
+  notes?: string | null;
+}
+
+export type PurchaseOrderStatus =
+  | "draft"
+  | "pending_approval"
+  | "approved"
+  | "rejected"
+  | "cancelled";
+
+export interface PurchaseOrderLine {
+  id: string;
+  purchase_order_id: string;
+  description: string;
+  quantity: number;
+  unit: string;
+  unit_price: number;
+  cost_code: CostCode;
+  line_total: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface POLineCreateInput {
+  description: string;
+  quantity: number;
+  unit: string;
+  unit_price: number;
+  cost_code: CostCode;
+}
+
+export interface POLineUpdateInput {
+  description?: string;
+  quantity?: number;
+  unit?: string;
+  unit_price?: number;
+  cost_code?: CostCode;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  po_number: string;
+  project_id: string;
+  project_code: string;
+  vendor_id: string;
+  vendor_name: string;
+  status: PurchaseOrderStatus;
+  order_date: string;
+  expected_delivery: string | null;
+  tax_rate: number | null;
+  subtotal: number;
+  tax_amount: number;
+  total_amount: number;
+  notes: string | null;
+  created_by: string | null;
+  submitted_at: string | null;
+  submitted_by: string | null;
+  approved_at: string | null;
+  approved_by: string | null;
+  rejected_at: string | null;
+  rejected_by: string | null;
+  rejected_reason: string | null;
+  cancelled_at: string | null;
+  cancelled_by: string | null;
+  created_at: string;
+  updated_at: string;
+  lines: PurchaseOrderLine[];
+}
+
+export interface PurchaseOrderCreateInput {
+  vendor_id: string;
+  order_date?: string | null;
+  expected_delivery?: string | null;
+  tax_rate?: number | null;
+  notes?: string | null;
+  lines: POLineCreateInput[];
+}
+
+export interface PurchaseOrderUpdateInput {
+  vendor_id?: string;
+  order_date?: string | null;
+  expected_delivery?: string | null;
+  tax_rate?: number | null;
+  notes?: string | null;
+}
+
+export interface PurchaseOrderRejectInput {
+  rejected_reason: string;
 }

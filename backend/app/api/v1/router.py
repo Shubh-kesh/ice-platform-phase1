@@ -11,6 +11,8 @@ from app.api.v1 import (
     finance,
     invoicing,
     notifications,
+    vendors,
+    purchase_orders,
 )
 
 api_router = APIRouter()
@@ -24,3 +26,5 @@ api_router.include_router(inventory.router)
 api_router.include_router(finance.router)
 api_router.include_router(invoicing.router)
 api_router.include_router(notifications.router)
+api_router.include_router(vendors.router)
+api_router.include_router(purchase_orders.router)

@@ -18,6 +18,7 @@ import { InventoryPanel } from "../components/InventoryPanel";
 import { JobCostsPanel } from "../components/JobCostsPanel";
 import { InvoicingPanel } from "../components/InvoicingPanel";
 import { ClientInvoicesPanel } from "../components/ClientInvoicesPanel";
+import { PurchaseOrdersPanel } from "../components/PurchaseOrdersPanel";
 import { ProjectAssignments } from "../components/ProjectAssignments";
 import { useAuth } from "../lib/auth-context";
 
@@ -109,6 +110,10 @@ export function ProjectDetail() {
     !isArchived && (user?.role === "admin" || user?.role === "procurement_manager");
   const canWriteFinance =
     !isArchived && (user?.role === "admin" || user?.role === "procurement_manager");
+  const canApprovePo =
+    !isArchived && user?.role === "admin";
+  const poFrozen =
+    project?.status === "completed" || project?.status === "archived";
 
   const transition = useMutation({
     mutationFn: async (action: "activate" | "complete" | "archive" | "restore") => {
@@ -280,6 +285,14 @@ export function ProjectDetail() {
                 projectId={project.id}
                 canWrite={canWriteFinance}
                 contractTotal={project.budget_total ?? 0}
+              />
+            )}
+            {canViewFinance && (
+              <PurchaseOrdersPanel
+                projectId={project.id}
+                canWrite={canWriteFinance}
+                canApprove={canApprovePo}
+                frozen={poFrozen}
               />
             )}
             {isClient && <ClientInvoicesPanel projectId={project.id} />}

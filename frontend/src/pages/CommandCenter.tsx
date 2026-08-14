@@ -7,6 +7,7 @@ import { AppShell } from "../components/AppShell";
 import { KpiStrip } from "../components/KpiStrip";
 import { ProjectCard } from "../components/ProjectCard";
 import { UsersPanel } from "../components/UsersPanel";
+import { VendorsPanel } from "../components/VendorsPanel";
 import { useAuth } from "../lib/auth-context";
 
 const EMPTY_FORM: ProjectCreateInput = {
@@ -53,6 +54,8 @@ export function CommandCenter() {
 
   const isAdmin = user?.role === "admin";
   const canViewBudget =
+    user?.role === "admin" || user?.role === "procurement_manager";
+  const canViewVendors =
     user?.role === "admin" || user?.role === "procurement_manager";
 
   const healthByProject = new Map(healths.map((h) => [h.project_id, h]));
@@ -180,6 +183,13 @@ export function CommandCenter() {
       {isAdmin && (
         <div className="mt-8">
           <UsersPanel />
+        </div>
+      )}
+
+      {/* M14: vendor master data — admin + procurement. */}
+      {canViewVendors && (
+        <div className="mt-8">
+          <VendorsPanel />
         </div>
       )}
 

@@ -260,6 +260,196 @@ async def test_assignment_notifies_assigned_user(
     assert await _notifications_of_type(client, admin, "project_assigned") == []
 
 
+# --- M14 PO events -------------------------------------------------------------
+
+
+async def _make_vendor(client: httpx.AsyncClient, header: str, name: str = "Cement Co") -> dict:
+    resp = await client.post(
+        "/api/v1/vendors",
+        headers={"Authorization": header},
+        json={"name": name},
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+async def _make_and_submit_po(
+    client: httpx.AsyncClient, header: str, project_id: uuid.UUID, vendor_id: uuid.UUID
+) -> dict:
+    po = (
+        await client.post(
+            f"/api/v1/projects/{project_id}/purchase-orders",
+            headers={"Authorization": header},
+            json={
+                "vendor_id": str(vendor_id),
+                "lines": [
+                    {"description": "Cement", "quantity": 10, "unit": "bag", "unit_price": 350, "cost_code": "material"}
+                ],
+            },
+        )
+    ).json()
+    await client.post(
+        f"/api/v1/projects/{project_id}/purchase-orders/{po['id']}/submit",
+        headers={"Authorization": header},
+    )
+    return po
+
+
+@pytest.mark.asyncio
+async def test_po_submitted_notifies_admins(
+    client: httpx.AsyncClient, test_admin_user, test_procurement_user, test_db, test_project
+):
+    header = await auth_header(client, "admin@test.com")
+    vendor = await _make_vendor(client, header)
+    await _make_and_submit_po(client, header, test_project.id, vendor["id"])
+
+    assert len(await _notifications_of_type(client, header, "po_submitted")) == 1
+    # Procurement is not a po_submitted recipient (approval task is admin-only).
+    proc = await auth_header(client, "procurement@test.com")
+    assert await _notifications_of_type(client, proc, "po_submitted") == []
+
+
+@pytest.mark.asyncio
+async def test_po_approved_notifies_creator_and_admins(
+    client: httpx.AsyncClient, test_admin_user, test_procurement_user, test_db, test_project
+):
+    admin = await auth_header(client, "admin@test.com")
+    vendor = await _make_vendor(client, admin)
+    await _make_and_submit_po(client, admin, test_project.id, vendor["id"])
+
+    proc = await auth_header(client, "procurement@test.com")
+    # Have procurement create + submit a PO so `created_by` is the procurement user.
+    po2 = (
+        await client.post(
+            f"/api/v1/projects/{test_project.id}/purchase-orders",
+            headers={"Authorization": proc},
+            json={
+                "vendor_id": str(vendor["id"]),
+                "lines": [
+                    {"description": "Steel", "quantity": 5, "unit": "t", "unit_price": 1000, "cost_code": "structure"}
+                ],
+            },
+        )
+    ).json()
+    await client.post(
+        f"/api/v1/projects/{test_project.id}/purchase-orders/{po2['id']}/submit",
+        headers={"Authorization": proc},
+    )
+    await client.post(
+        f"/api/v1/projects/{test_project.id}/purchase-orders/{po2['id']}/approve",
+        headers={"Authorization": admin},
+    )
+
+    # Creator + admins both receive po_approved.
+    assert len(await _notifications_of_type(client, proc, "po_approved")) == 1
+    assert len(await _notifications_of_type(client, admin, "po_approved")) >= 1
+
+
+@pytest.mark.asyncio
+async def test_po_rejected_notifies_creator_and_admins(
+    client: httpx.AsyncClient, test_admin_user, test_procurement_user, test_db, test_project
+):
+    admin = await auth_header(client, "admin@test.com")
+    vendor = await _make_vendor(client, admin)
+    proc = await auth_header(client, "procurement@test.com")
+    po = (
+        await client.post(
+            f"/api/v1/projects/{test_project.id}/purchase-orders",
+            headers={"Authorization": proc},
+            json={
+                "vendor_id": str(vendor["id"]),
+                "lines": [
+                    {"description": "Pipes", "quantity": 4, "unit": "pcs", "unit_price": 500, "cost_code": "plumbing"}
+                ],
+            },
+        )
+    ).json()
+    await client.post(
+        f"/api/v1/projects/{test_project.id}/purchase-orders/{po['id']}/submit",
+        headers={"Authorization": proc},
+    )
+    await client.post(
+        f"/api/v1/projects/{test_project.id}/purchase-orders/{po['id']}/reject",
+        headers={"Authorization": admin},
+        json={"rejected_reason": "too expensive"},
+    )
+
+    assert len(await _notifications_of_type(client, proc, "po_rejected")) == 1
+    assert len(await _notifications_of_type(client, admin, "po_rejected")) >= 1
+
+
+@pytest.mark.asyncio
+async def test_po_notifications_none_to_supervisor_or_client(
+    client: httpx.AsyncClient,
+    test_admin_user,
+    test_supervisor_user,
+    test_client_user,
+    test_db,
+    test_project,
+):
+    await assign_user_to_project(test_db, test_project.id, test_supervisor_user.id)
+    await assign_user_to_project(test_db, test_project.id, test_client_user.id)
+    header = await auth_header(client, "admin@test.com")
+    vendor = await _make_vendor(client, header)
+    po = await _make_and_submit_po(client, header, test_project.id, vendor["id"])
+    await client.post(
+        f"/api/v1/projects/{test_project.id}/purchase-orders/{po['id']}/approve",
+        headers={"Authorization": header},
+    )
+
+    sup = await auth_header(client, "supervisor@test.com")
+    cli = await auth_header(client, "client@test.com")
+    for type_ in ("po_submitted", "po_approved", "po_rejected"):
+        assert await _notifications_of_type(client, sup, type_) == []
+        assert await _notifications_of_type(client, cli, type_) == []
+
+
+@pytest.mark.asyncio
+async def test_po_failed_transition_no_notification(
+    client: httpx.AsyncClient, test_admin_user, test_procurement_user, test_db, test_project
+):
+    """A failed (illegal) transition rolls back with its notification: approving
+    a DRAFT PO returns 400 and must not fire po_approved."""
+    header = await auth_header(client, "admin@test.com")
+    vendor = await _make_vendor(client, header)
+    po = (
+        await client.post(
+            f"/api/v1/projects/{test_project.id}/purchase-orders",
+            headers={"Authorization": header},
+            json={
+                "vendor_id": str(vendor["id"]),
+                "lines": [
+                    {"description": "Bricks", "quantity": 100, "unit": "pcs", "unit_price": 5, "cost_code": "masonry"}
+                ],
+            },
+        )
+    ).json()
+    resp = await client.post(
+        f"/api/v1/projects/{test_project.id}/purchase-orders/{po['id']}/approve",
+        headers={"Authorization": header},
+    )
+    assert resp.status_code == 400
+    assert await _notifications_of_type(client, header, "po_approved") == []
+
+
+@pytest.mark.asyncio
+async def test_po_resubmit_fires_fresh_submitted(
+    client: httpx.AsyncClient, test_admin_user, test_procurement_user, test_db, test_project
+):
+    """Each distinct transition fires once: submit -> 1 po_submitted; reject ->
+    resubmit fires a second, fresh po_submitted (never a duplicate of the first)."""
+    header = await auth_header(client, "admin@test.com")
+    vendor = await _make_vendor(client, header)
+    po = await _make_and_submit_po(client, header, test_project.id, vendor["id"])
+    url = f"/api/v1/projects/{test_project.id}/purchase-orders/{po['id']}"
+
+    await client.post(f"{url}/reject", headers={"Authorization": header}, json={"rejected_reason": "revise"})
+    await client.post(f"{url}/resubmit", headers={"Authorization": header})
+
+    notifications = await _notifications_of_type(client, header, "po_submitted")
+    assert len(notifications) == 2
+
+
 # --- API ownership / IDOR / read state ---------------------------------------
 
 

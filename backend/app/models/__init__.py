@@ -18,6 +18,8 @@ from app.models.health import HealthOverride, HealthOverrideTarget, HealthOverri
 from app.models.idempotency import IdempotencyRecord
 from app.models.refresh_session import RefreshSession
 from app.models.notification import Notification, NotificationType
+from app.models.vendor import Vendor
+from app.models.purchase_order import POLine, POStatus, PurchaseOrder
 
 __all__ = [
     "User",
@@ -48,4 +50,8 @@ __all__ = [
     "RefreshSession",
     "Notification",
     "NotificationType",
+    "Vendor",
+    "POLine",
+    "POStatus",
+    "PurchaseOrder",
 ]

@@ -182,3 +182,72 @@ async def notify_project_assigned(
         body=f"You now have access to {project_name}",
         link=f"/projects/{project_id}",
     )
+
+
+async def _creator_plus_active_admins(
+    db: AsyncSession, created_by: uuid.UUID | None
+) -> list[uuid.UUID]:
+    """M14 PO decision recipients: the PO creator (if still active) + every
+    active admin. Duplicates are collapsed by create_notifications."""
+    recipient_ids: set[uuid.UUID] = set(await _active_admin_ids(db))
+    if created_by is not None:
+        result = await db.execute(
+            select(User.id).where(User.id == created_by, User.is_active.is_(True))
+        )
+        creator = result.scalar_one_or_none()
+        if creator is not None:
+            recipient_ids.add(creator)
+    return list(recipient_ids)
+
+
+async def notify_po_submitted(
+    db: AsyncSession, project_id: uuid.UUID, po_number: str
+) -> None:
+    """M14 PO DRAFT->PENDING_APPROVAL -> all active admins (an approval task
+    awaits). Transitions are single-fire, so no duplicate notifications."""
+    await create_notifications(
+        db,
+        user_ids=await _active_admin_ids(db),
+        project_id=project_id,
+        type_=NotificationType.PO_SUBMITTED,
+        title="Purchase order awaiting approval",
+        body=f"Purchase order {po_number} has been submitted for approval",
+        link=f"/projects/{project_id}",
+    )
+
+
+async def notify_po_approved(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    po_number: str,
+    created_by: uuid.UUID | None,
+) -> None:
+    """M14 PO PENDING_APPROVAL->APPROVED -> PO creator + active admins."""
+    await create_notifications(
+        db,
+        user_ids=await _creator_plus_active_admins(db, created_by),
+        project_id=project_id,
+        type_=NotificationType.PO_APPROVED,
+        title="Purchase order approved",
+        body=f"Purchase order {po_number} has been approved",
+        link=f"/projects/{project_id}",
+    )
+
+
+async def notify_po_rejected(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    po_number: str,
+    created_by: uuid.UUID | None,
+) -> None:
+    """M14 PO PENDING_APPROVAL->REJECTED -> PO creator + active admins (the
+    creator must act — revise/resubmit)."""
+    await create_notifications(
+        db,
+        user_ids=await _creator_plus_active_admins(db, created_by),
+        project_id=project_id,
+        type_=NotificationType.PO_REJECTED,
+        title="Purchase order rejected",
+        body=f"Purchase order {po_number} was rejected",
+        link=f"/projects/{project_id}",
+    )

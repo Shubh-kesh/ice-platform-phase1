@@ -11,13 +11,22 @@ import type {
   Invoice,
   InvoiceClientRead,
   InvoiceCreateInput,
+  POLineCreateInput,
+  POLineUpdateInput,
   Project,
   ProjectCreateInput,
   ProjectHealth,
+  PurchaseOrder,
+  PurchaseOrderCreateInput,
+  PurchaseOrderRejectInput,
+  PurchaseOrderUpdateInput,
   TokenResponse,
   User,
   UserCreateInput,
   UserUpdateInput,
+  Vendor,
+  VendorCreateInput,
+  VendorUpdateInput,
 } from "../types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000/api/v1";
@@ -315,6 +324,126 @@ export async function transitionInvoice(
     `/projects/${projectId}/invoices/${invoiceId}/${action}`
   );
   return data;
+}
+
+// --- Phase 5 M14: vendors + purchase orders ---
+
+export async function listVendors(): Promise<Vendor[]> {
+  const { data } = await api.get<Vendor[]>("/vendors");
+  return data;
+}
+
+export async function createVendor(input: VendorCreateInput): Promise<Vendor> {
+  const { data } = await api.post<Vendor>("/vendors", input);
+  return data;
+}
+
+export async function updateVendor(
+  vendorId: string,
+  input: VendorUpdateInput
+): Promise<Vendor> {
+  const { data } = await api.patch<Vendor>(`/vendors/${vendorId}`, input);
+  return data;
+}
+
+export async function listPurchaseOrders(
+  projectId: string
+): Promise<PurchaseOrder[]> {
+  const { data } = await api.get<PurchaseOrder[]>(
+    `/projects/${projectId}/purchase-orders`
+  );
+  return data;
+}
+
+export async function getPurchaseOrder(
+  projectId: string,
+  poId: string
+): Promise<PurchaseOrder> {
+  const { data } = await api.get<PurchaseOrder>(
+    `/projects/${projectId}/purchase-orders/${poId}`
+  );
+  return data;
+}
+
+export async function createPurchaseOrder(
+  projectId: string,
+  input: PurchaseOrderCreateInput
+): Promise<PurchaseOrder> {
+  const { data } = await api.post<PurchaseOrder>(
+    `/projects/${projectId}/purchase-orders`,
+    input
+  );
+  return data;
+}
+
+export async function updatePurchaseOrder(
+  projectId: string,
+  poId: string,
+  input: PurchaseOrderUpdateInput
+): Promise<PurchaseOrder> {
+  const { data } = await api.patch<PurchaseOrder>(
+    `/projects/${projectId}/purchase-orders/${poId}`,
+    input
+  );
+  return data;
+}
+
+export async function transitionPurchaseOrder(
+  projectId: string,
+  poId: string,
+  action: "submit" | "approve" | "revise" | "resubmit" | "cancel",
+  body?: PurchaseOrderRejectInput
+): Promise<PurchaseOrder> {
+  const { data } = await api.post<PurchaseOrder>(
+    `/projects/${projectId}/purchase-orders/${poId}/${action}`,
+    body
+  );
+  return data;
+}
+
+export async function rejectPurchaseOrder(
+  projectId: string,
+  poId: string,
+  reason: string
+): Promise<PurchaseOrder> {
+  const { data } = await api.post<PurchaseOrder>(
+    `/projects/${projectId}/purchase-orders/${poId}/reject`,
+    { rejected_reason: reason }
+  );
+  return data;
+}
+
+export async function addPoLine(
+  projectId: string,
+  poId: string,
+  input: POLineCreateInput
+): Promise<PurchaseOrder["lines"][number]> {
+  const { data } = await api.post<PurchaseOrder["lines"][number]>(
+    `/projects/${projectId}/purchase-orders/${poId}/lines`,
+    input
+  );
+  return data;
+}
+
+export async function updatePoLine(
+  projectId: string,
+  poId: string,
+  lineId: string,
+  input: POLineUpdateInput
+): Promise<PurchaseOrder["lines"][number]> {
+  const { data } = await api.patch<PurchaseOrder["lines"][number]>(
+    `/projects/${projectId}/purchase-orders/${poId}/lines/${lineId}`,
+    input
+  );
+  return data;
+}
+
+export async function deletePoLine(
+  projectId: string,
+  poId: string,
+  lineId: string
+): Promise<void> {
+  await api.delete(`/projects/${projectId}/purchase-orders/${poId}/lines/${lineId}`);
 }
 
 api.interceptors.response.use(

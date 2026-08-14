@@ -14,6 +14,9 @@ class NotificationType(str, enum.Enum):
     MILESTONE_INVOICE_ISSUED = "milestone_invoice_issued"
     INVENTORY_LOW_STOCK = "inventory_low_stock"
     PROJECT_ASSIGNED = "project_assigned"
+    PO_SUBMITTED = "po_submitted"
+    PO_APPROVED = "po_approved"
+    PO_REJECTED = "po_rejected"
 
 
 class Notification(Base):
