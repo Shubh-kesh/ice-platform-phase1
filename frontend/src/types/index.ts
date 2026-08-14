@@ -117,7 +117,8 @@ export type NotificationType =
   | "project_assigned"
   | "po_submitted"
   | "po_approved"
-  | "po_rejected";
+  | "po_rejected"
+  | "po_received";
 
 export interface AppNotification {
   id: string;
@@ -460,6 +461,8 @@ export type PurchaseOrderStatus =
   | "draft"
   | "pending_approval"
   | "approved"
+  | "partially_received"
+  | "received"
   | "rejected"
   | "cancelled";
 
@@ -468,6 +471,9 @@ export interface PurchaseOrderLine {
   purchase_order_id: string;
   description: string;
   quantity: number;
+  received_quantity: number;
+  received_remaining: number;
+  inventory_item_id: string | null;
   unit: string;
   unit_price: number;
   cost_code: CostCode;
@@ -541,4 +547,48 @@ export interface PurchaseOrderUpdateInput {
 
 export interface PurchaseOrderRejectInput {
   rejected_reason: string;
+}
+
+// --- Phase 5 M15: delivery verification / receiving ---
+
+export interface DeliveryLine {
+  id: string;
+  delivery_id: string;
+  po_line_id: string;
+  inventory_item_id: string;
+  quantity_received: number;
+  unit_price: number;
+  line_total: number;
+  created_at: string;
+  description?: string | null;
+  unit?: string | null;
+}
+
+export interface Delivery {
+  id: string;
+  project_id: string;
+  purchase_order_id: string;
+  reference: string;
+  note: string | null;
+  photo_reference: string | null;
+  verified_by: string | null;
+  verified_at: string;
+  created_by: string | null;
+  created_at: string;
+  line_count: number;
+  po_status_after: string | null;
+  lines?: DeliveryLine[];
+}
+
+export interface DeliveryLineCreateInput {
+  po_line_id: string;
+  quantity: number;
+  inventory_item_id: string;
+}
+
+export interface DeliveryCreateInput {
+  reference: string;
+  note?: string | null;
+  photo_reference?: string | null;
+  lines: DeliveryLineCreateInput[];
 }

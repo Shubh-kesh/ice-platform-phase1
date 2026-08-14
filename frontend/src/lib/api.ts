@@ -4,6 +4,8 @@ import type {
   BillingMilestone,
   BillingMilestoneCreateInput,
   BillingMilestoneUpdateInput,
+  Delivery,
+  DeliveryCreateInput,
   GoogleAuthorizeResponse,
   GoogleCallbackInput,
   HealthOverrideCreateInput,
@@ -444,6 +446,47 @@ export async function deletePoLine(
   lineId: string
 ): Promise<void> {
   await api.delete(`/projects/${projectId}/purchase-orders/${poId}/lines/${lineId}`);
+}
+
+// --- Phase 5 M15: delivery verification / receiving ---
+
+// The Idempotency-Key is generated once per logical receive operation by the
+// caller (the receive form) and REUSED when retrying that operation, so a
+// retry replays the stored receipt instead of double-receiving. A fresh key
+// is only minted for a genuinely new operation.
+export async function receivePurchaseOrder(
+  projectId: string,
+  poId: string,
+  input: DeliveryCreateInput,
+  idempotencyKey: string
+): Promise<Delivery> {
+  const { data } = await api.post<Delivery>(
+    `/projects/${projectId}/purchase-orders/${poId}/receive`,
+    input,
+    { headers: { "Idempotency-Key": idempotencyKey } }
+  );
+  return data;
+}
+
+export async function listDeliveries(
+  projectId: string,
+  poId: string
+): Promise<Delivery[]> {
+  const { data } = await api.get<Delivery[]>(
+    `/projects/${projectId}/purchase-orders/${poId}/deliveries`
+  );
+  return data;
+}
+
+export async function getDelivery(
+  projectId: string,
+  poId: string,
+  deliveryId: string
+): Promise<Delivery> {
+  const { data } = await api.get<Delivery>(
+    `/projects/${projectId}/purchase-orders/${poId}/deliveries/${deliveryId}`
+  );
+  return data;
 }
 
 api.interceptors.response.use(

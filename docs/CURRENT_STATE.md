@@ -28,8 +28,9 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 
 - **Frontend:** React 19 + Vite + TanStack Query + react-router-dom + axios + Tailwind. 4 routes: `/login`, `/google/callback`, `/` (Command Center), `/projects/:projectId`.
 - **Backend:** FastAPI, async SQLAlchemy ORM, Alembic migrations, bcrypt + JWT + opaque hashed refresh sessions, slowapi rate limiting. All business logic lives inside `api/v1/*` route files.
-- **Database:** PostgreSQL 16, Alembic head `k4c5d6e7f8a9` (M14
-  `vendors`/`purchase_orders`/`po_lines`), applied in the Docker dev database.
+- **Database:** PostgreSQL 16, Alembic head `l5d6e7f8a9b0` (M15
+  `deliveries`/`delivery_lines` + `po_status` extension), applied in the Docker
+  dev database (verified Aug 14, 2026).
 - **Deployment:** Docker + docker-compose (local dev). Multi-stage non-root Dockerfile, 4 gunicorn workers, healthcheck, migrations run on container start. A clean no-cache rebuild installs all runtime requirements, including `httpx==0.27.2`.
 - **Redis:** provisioned in compose, configured in settings, **never used by any code**.
 - **Not present:** separate services layer, repositories, queues/workers, caching, file storage, external integrations, monitoring, IaC.
@@ -148,6 +149,7 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 - **Audit trail:** covers CRUD on users/projects/tasks/logs/inventory **and auth events** (login/refresh/logout/reuse-detection, Phase 3 M9). `ip_address` is now populated for auth events (`table_name='auth'`) but still NULL for business mutations.
 - **Client experience:** the Client role can log in and view only their assigned projects (tight `ProjectClientRead` shape — no budgets, no health, no lifecycle attribution), their schedule/timeline, daily site logs, and issued payment requests (P3 M5 restricted shape; DRAFT invoices hidden). Computed health, the inventory/procurement ledger and all write endpoints are 403 — but this is not yet the PRD's full view-only photo portal.
 - **Finance:** job-costing and milestone invoicing both exist (P3 M4 + M5, see §4b); only external-accounting sync remains (blocked on a provider/OAuth decision, per repo notes).
+- **PO delivery verification / receiving (M15 — schema landed, API pending):** the M15 data model is implemented and migrated (`l5d6e7f8a9b0`): `po_status` gained `PARTIALLY_RECEIVED`/`RECEIVED`; `po_lines` gained `received_quantity`/`inventory_item_id`; `stock_movements.po_line_id` and `job_costs.po_line_id` provide receipt provenance; new append-only `deliveries`/`delivery_lines` tables hold the evidence (reference/note/photo_reference/verified_by/at) and per-line snapshotted amounts. **Not yet implemented:** the receiving API/service, job-cost/stock release logic, `po_received` notifications, and frontend receive UI — a verified receipt is therefore still the *planned* (not yet the only) path into inventory/costs. See `docs/M15_IMPLEMENTATION_PLAN.md`.
 
 ## 6. Known bugs
 
@@ -195,7 +197,7 @@ SQLAlchemy 2.0 async (asyncpg) --> PostgreSQL 16
 
 ## 10. Testing status
 
-- **Backend tests: 306, all passing** against real Postgres (verified Aug 14, 2026), including 20 M11 Google/onboarding tests, 17 M6 client-portal tests, 21 M12 scheduling tests, 18 M13/M14 notification tests, 13 M14 vendor tests, and 32 M14 purchase-order tests (po_number sequencing, totals/tax invariant + Decimal rounding, full state machine, RBAC matrix incl. admin-only approve/reject and APPROVED-cancel, lifecycle gating, IDOR, idempotent replay, audit rows, and real two-session concurrency: distinct po_numbers, single same-key create, total never drifting). The migration test verifies the Alembic upgrade/downgrade/replay chain through `k4c5d6e7f8a9`.
+- **Backend tests: 307, all passing** against real Postgres (verified Aug 14, 2026), including 20 M11 Google/onboarding tests, 17 M6 client-portal tests, 21 M12 scheduling tests, 18 M13/M14 notification tests, 13 M14 vendor tests, and 32 M14 purchase-order tests (po_number sequencing, totals/tax invariant + Decimal rounding, full state machine, RBAC matrix incl. admin-only approve/reject and APPROVED-cancel, lifecycle gating, IDOR, idempotent replay, audit rows, and real two-session concurrency: distinct po_numbers, single same-key create, total never drifting). The migration test verifies the Alembic upgrade/downgrade/replay chain through `l5d6e7f8a9b0` (M15: new tables/columns + `po_status` enum extension asserted on upgrade and dropped on downgrade).
 - **Coverage: ~75%** overall (pytest-cov). Lowest areas: inventory `api/v1/inventory.py` 39%, `projects.py` 42%, `tasks.py` 42%.
 - **Frontend tests: none** (no vitest/RTL config or tests).
 - **Missing critical tests:** project CRUD/PATCH RBAC/budget-validation edge cases beyond the lifecycle/health suites; client read-isolation (archived-404 is covered; assigned-client non-archived read is not); audit endpoint (`/audit/logs`) untested; frontend tests remain absent.

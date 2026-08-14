@@ -188,14 +188,14 @@ Ordering rationale:
 
 **Goal:** The procurement pillar: purchase orders, delivery verification, and inventory spanning warehouse → transit → site with schedule-driven restocking.
 
-**Status (Aug 14, 2026):** the first milestone (**M14 — Vendors + Purchase Orders**, the "vendor entity + PO entity + PO lifecycle + approval workflow" MUST/SHOULD items below) is DONE and test-pinned; **delivery verification, the location dimension, and the demand forecast are NOT started** (M15/M16). Vendor performance tracking (on-time %, price) is blocked on M15 delivery data.
+**Status (Aug 14, 2026):** the first milestone (**M14 — Vendors + Purchase Orders**, the "vendor entity + PO entity + PO lifecycle + approval workflow" MUST/SHOULD items below) is DONE and test-pinned. **M15 — delivery verification/receiving — is IN PROGRESS** (schema + models + migration `l5d6e7f8a9b0` landed per `docs/M15_IMPLEMENTATION_PLAN.md`; receiving API/service, notifications, and frontend pending). The location dimension and the demand forecast are **NOT started** (M16). Vendor performance tracking (on-time %, price) is blocked on M15 delivery data.
 
 **Business value:** High — this is where material spend is controlled; PO verification prevents paying for unverified goods; 3-location tracking reduces stockouts/misplacement across 15 sites.
 
 **Features**
 - **MUST:** Vendor entity (name/contact/payment terms) + vendor performance tracking (on-time %, price). — *vendor master data DONE (M14); performance tracking pending (needs M15 delivery data)*
 - **MUST:** Purchase Order entity (vendor, lines, quantities, project, status) + PO lifecycle. — *DONE (M14)*
-- **MUST:** Delivery verification — QR-code scan **or** photo-verified receipt against PO lines; verified receipt releases stock into inventory and triggers cost entries. — *NOT STARTED (M15)*
+- **MUST:** Delivery verification — QR-code scan **or** photo-verified receipt against PO lines; verified receipt releases stock into inventory and triggers cost entries. — *IN PROGRESS (M15: schema/models landed; receiving API + job-cost/stock release pending)*
 - **MUST:** Location dimension: `warehouse` / `transit` / `site` for inventory; transfers between locations recorded as movements. — *NOT STARTED (M16)*
 - **MUST:** Low-stock **forecast** alerts using next-7-days-scheduled demand (from tasks + BOQ/BOM) rather than static thresholds. — *NOT STARTED (M16; needs a Phase 4 worker)*
 - **SHOULD:** Approval workflow: Procurement creates PO → (optional) Admin approve → receive. — *approval workflow DONE (M14, mandatory — no auto-approve bypass)*

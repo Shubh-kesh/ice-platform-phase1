@@ -44,16 +44,19 @@ from app.models.finance import CostCode
 
 
 class POStatus(str, enum.Enum):
-    """Purchase-order lifecycle (M14).
+    """Purchase-order lifecycle (M14 + M15).
 
-    APPROVED and CANCELLED are terminal in M14. M15 extends the enum with
-    partially_received/received/closed via an additive ALTER TYPE. Values are
-    stored by member name (DRAFT/PENDING_APPROVAL/...) in the native enum,
-    matching the M5 invoice_status pattern.
+    APPROVED and CANCELLED were terminal in M14. M15 adds PARTIALLY_RECEIVED
+    and RECEIVED via an additive ALTER TYPE: receiving derives them from the
+    lines' accumulated `received_quantity`. Values are stored by member name
+    (DRAFT/PENDING_APPROVAL/...) in the native enum, matching the M5
+    invoice_status pattern. RECEIVED is terminal; no `closed` state exists.
     """
     DRAFT = "draft"
     PENDING_APPROVAL = "pending_approval"
     APPROVED = "approved"
+    PARTIALLY_RECEIVED = "partially_received"
+    RECEIVED = "received"
     REJECTED = "rejected"
     CANCELLED = "cancelled"
 
@@ -126,6 +129,10 @@ class POLine(Base):
     `line_total` is derived ON READ (quantity x unit_price, ROUND_HALF_UP to
     2dp) and never stored. `cost_code` reuses the M4 enum so the M15 receiving
     flow can create the material JobCost with the correct cost code.
+    `received_quantity` (M15) accumulates across verified receipts and can
+    never exceed `quantity` (app-level, over-receiving doctrine); the balance
+    `quantity - received_quantity` is derived on read. `inventory_item_id`
+    records the item a line feeds (set on first receipt, app-immutable).
     """
     __tablename__ = "po_lines"
     __table_args__ = (
@@ -142,6 +149,14 @@ class POLine(Base):
     )
     description: Mapped[str] = mapped_column(String(255), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    received_quantity: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("0"), nullable=False
+    )
+    inventory_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_items.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     unit: Mapped[str] = mapped_column(String(50), nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     cost_code: Mapped[CostCode] = mapped_column(

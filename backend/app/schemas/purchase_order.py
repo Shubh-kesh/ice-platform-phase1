@@ -39,13 +39,21 @@ class POLineUpdate(BaseModel):
 
 class POLineRead(POLineBase):
     """Line as serialized to admin/procurement. `line_total` is derived on read
-    (quantity x unit_price, ROUND_HALF_UP to 2dp) — never a stored column."""
+    (quantity x unit_price, ROUND_HALF_UP to 2dp) and `received_remaining` is
+    the read-derived balance (quantity - received_quantity) — neither is a
+    stored column. `received_quantity` / `inventory_item_id` are real M15
+    columns. `received_remaining` is attached by the serializer when it renders
+    a PO (the setattr doctrine used for `line_total`), defaulting to 0 for
+    safety in other serialization paths."""
 
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
     purchase_order_id: uuid.UUID
     line_total: float
+    received_quantity: float
+    received_remaining: float = 0
+    inventory_item_id: uuid.UUID | None = None
     created_at: datetime
     updated_at: datetime
 

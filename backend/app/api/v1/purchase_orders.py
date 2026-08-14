@@ -1,30 +1,38 @@
 """
-Purchase-order endpoints (Phase 5, M14).
+Purchase-order endpoints (Phase 5, M14 + M15).
 
 Project-scoped commitment documents: vendor + lines + derived totals + an
 audited, role-gated lifecycle. M14 POs create no job costs and no stock
-movements (delivery verification / receiving is M15).
+movements; **M15 receiving is the ONLY path that releases PO quantity into
+inventory (RECEIVED movements + quantity_on_hand) and into project costs
+(JobCost rows + budget_spent)**.
 
-RBAC (per the M14 plan §10):
+RBAC (per the M14 plan §10 / M15 plan §6):
   * admin + procurement: list/get/create/header-PATCH/line ops/submit/revise/
-    resubmit, and cancel of DRAFT/PENDING_APPROVAL.
+    resubmit, cancel of DRAFT/PENDING_APPROVAL, and **receive (M15)**.
   * admin only: approve, reject, and cancel of APPROVED.
-  * supervisors/clients: 403 on every route (no PO shape exists for them).
+  * supervisors/clients: 403 on every route (no PO/receipt shape exists for
+    them).
 
 Lifecycle (no status PATCH — dedicated, row-locked, audited transitions):
     DRAFT -> submit (>=1 line) -> PENDING_APPROVAL -> approve -> APPROVED
     PENDING_APPROVAL -> reject (reason) -> REJECTED
     REJECTED -> revise -> DRAFT | resubmit -> PENDING_APPROVAL
     DRAFT|PENDING_APPROVAL -> cancel; APPROVED -> cancel (admin only)
+    APPROVED -> receive -> PARTIALLY_RECEIVED -> receive -> RECEIVED (M15)
+  PARTIALLY_RECEIVED/RECEIVED can never be cancelled (receipts already released
+  stock + costs); RECEIVED is terminal.
 
 Concurrency (plan §17): every mutation takes the project row lock FIRST
 (get_project_for_update — serializes po_number allocation and total recompute),
-then the PO row lock for transitions/edits (SELECT ... FOR UPDATE). The order
-project -> PO is never reversed, so lock graphs are acyclic.
+then the PO row lock for transitions/edits (SELECT ... FOR UPDATE). Receiving
+additionally locks each target inventory item AFTER the PO lock. The order
+project -> PO -> item is never reversed, so lock graphs are acyclic.
 
-Idempotency (M8): POST (create PO + nested lines) and POST (add line) are
-idempotency-protected; transitions are deliberately unprotected (state-machine
-guarded). Totals are always server-derived and recomputed in-transaction.
+Idempotency (M8): POST (create PO + nested lines), POST (add line) and
+POST (receive, M15) are idempotency-protected; transitions are deliberately
+unprotected (state-machine guarded). Totals are always server-derived and
+recomputed in-transaction.
 """
 import json
 import uuid
@@ -45,10 +53,14 @@ from app.api.project_access import (
 )
 from app.core.database import get_db
 from app.middleware.audit import record_audit
+from app.models.delivery import Delivery, DeliveryLine
+from app.models.finance import JobCost
+from app.models.inventory import InventoryItem, MovementType, StockMovement
 from app.models.project import Project, ProjectStatus
 from app.models.purchase_order import POLine, POStatus, PurchaseOrder
 from app.models.user import User, UserRole
 from app.models.vendor import Vendor
+from app.schemas.delivery import DeliveryCreate, DeliveryDetailRead, DeliveryRead
 from app.schemas.purchase_order import (
     POLineCreate,
     POLineRead,
@@ -58,9 +70,11 @@ from app.schemas.purchase_order import (
     PurchaseOrderReject,
     PurchaseOrderUpdate,
 )
+from app.services.finance import refresh_budget_spent
 from app.services.idempotency import IdempotencyGuard
 from app.services.notifications import (
     notify_po_approved,
+    notify_po_received,
     notify_po_rejected,
     notify_po_submitted,
 )
@@ -70,6 +84,12 @@ from app.services.purchase_orders import (
     po_number_for,
     refresh_po_total,
     tax_amount,
+)
+from app.services.receiving import (
+    derive_received_status,
+    over_receiving,
+    receipt_line_total,
+    remaining_quantity,
 )
 
 router = APIRouter(prefix="/projects/{project_id}/purchase-orders", tags=["purchase_orders"])
@@ -140,10 +160,12 @@ async def _load_po_read(
 
 
 def _attach_line_totals(lines: list[POLine]) -> list[POLine]:
-    """Derive each line's line_total (qty x price, ROUND_HALF_UP) — never
-    stored, attached before serialization (the setattr doctrine)."""
+    """Derive each line's line_total (qty x price, ROUND_HALF_UP) and
+    received_remaining (quantity - received_quantity) — never stored, attached
+    before serialization (the setattr doctrine)."""
     for line in lines:
         setattr(line, "line_total", float(line_total(line.quantity, line.unit_price)))
+        setattr(line, "received_remaining", float(remaining_quantity(line.quantity, line.received_quantity)))
     return lines
 
 
@@ -621,10 +643,18 @@ async def cancel_purchase_order(
     user: Annotated[User, Depends(admin_proc)],
 ):
     """Cancel a PO. DRAFT/PENDING_APPROVAL: admin + procurement. APPROVED:
-    admin only (403 otherwise). CANCELLED is terminal in M14."""
+    admin only (403 otherwise). PARTIALLY_RECEIVED/RECEIVED can never be
+    cancelled (M15 — receipts already released stock + costs; reversal is out
+    of scope). CANCELLED is terminal."""
     project = await get_project_for_update(db, project_id)
     _assert_po_writable(project)
     po = await _get_po_locked(db, project_id, po_id)
+
+    if po.status in (POStatus.PARTIALLY_RECEIVED, POStatus.RECEIVED):
+        raise HTTPException(
+            status_code=400,
+            detail="A purchase order that has received stock cannot be cancelled",
+        )
 
     if po.status == POStatus.APPROVED:
         if user.role != UserRole.ADMIN:
@@ -839,3 +869,263 @@ async def delete_po_line(
     )
     await db.commit()
     return None
+
+
+# --- M15: delivery verification / receiving ----------------------------------
+
+
+@router.post("/{po_id}/receive", response_model=DeliveryRead, status_code=status.HTTP_201_CREATED)
+async def receive_purchase_order(
+    project_id: uuid.UUID,
+    po_id: uuid.UUID,
+    payload: DeliveryCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(admin_proc)],
+    idem: Annotated[IdempotencyGuard, Depends(get_idempotency_guard)],
+):
+    """Verify + receive one or more PO lines (M15).
+
+    The ONLY path that releases PO quantity into inventory (RECEIVED stock
+    movements + quantity_on_hand) and into project costs (JobCost rows +
+    budget_spent). One transaction, lock order project -> PO -> inventory
+    items, then audit + notification + idempotency finalization before commit.
+
+    M8 idempotency-protected: a retry replays the stored flat `DeliveryRead`
+    (relationship-free, so the normal IdempotencyGuard.finish() path is used —
+    no M14 relationship-refresh workaround).
+    """
+    if idem.replay is not None:
+        return idem.replay
+
+    project = await get_project_for_update(db, project_id)
+    _assert_po_writable(project)
+    po = await _get_po_locked(db, project_id, po_id)
+
+    if po.status not in (POStatus.APPROVED, POStatus.PARTIALLY_RECEIVED):
+        raise HTTPException(
+            status_code=400,
+            detail="Only APPROVED or PARTIALLY_RECEIVED purchase orders can be received",
+        )
+
+    result = await db.execute(
+        select(POLine).where(POLine.purchase_order_id == po.id)
+    )
+    po_lines = {line.id: line for line in result.scalars().all()}
+
+    # Lock every distinct target inventory item (project-scoped) AFTER the PO
+    # lock — lock ordering project -> PO -> item is never reversed. Sorting by
+    # id keeps multi-item lock acquisition deterministic.
+    item_ids = sorted({dl.inventory_item_id for dl in payload.lines})
+    items_result = await db.execute(
+        select(InventoryItem)
+        .where(InventoryItem.id.in_(item_ids), InventoryItem.project_id == project.id)
+        .with_for_update()
+    )
+    items = {item.id: item for item in items_result.scalars().all()}
+    for item_id in item_ids:
+        if item_id not in items:
+            raise HTTPException(status_code=404, detail="Inventory item not found")
+
+    # Validate every delivery line against its PO line + item BEFORE any write.
+    # `pending` accumulates per-line incoming quantities within this request so
+    # a payload that repeats a line cannot bypass the over-receipt guard.
+    pending: dict[uuid.UUID, Decimal] = {}
+    for dl in payload.lines:
+        line = po_lines.get(dl.po_line_id)
+        if line is None:
+            raise HTTPException(status_code=404, detail="PO line not found")
+        item = items[dl.inventory_item_id]
+        if line.unit != item.unit:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unit mismatch: PO line '{line.description}' is in '{line.unit}' "
+                    f"but inventory item '{item.name}' is in '{item.unit}'"
+                ),
+            )
+        incoming = Decimal(str(dl.quantity))
+        pending[line.id] = pending.get(line.id, Decimal("0")) + incoming
+        if over_receiving(line.quantity, line.received_quantity, pending[line.id]):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Receiving {float(pending[line.id]):g} would over-receive PO line "
+                    f"'{line.description}' (have "
+                    f"{float(remaining_quantity(line.quantity, line.received_quantity)):g} remaining)"
+                ),
+            )
+        if line.inventory_item_id is not None and line.inventory_item_id != item.id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"PO line '{line.description}' is already linked to a different inventory item",
+            )
+
+    now = _now()
+    delivery = Delivery(
+        project_id=project.id,
+        purchase_order_id=po.id,
+        reference=payload.reference,
+        note=payload.note,
+        photo_reference=payload.photo_reference,
+        verified_by=user.id,
+        verified_at=now,
+        created_by=user.id,
+    )
+    db.add(delivery)
+    await db.flush()
+
+    total_received_amount = Decimal("0")
+    for dl in payload.lines:
+        line = po_lines[dl.po_line_id]
+        item = items[dl.inventory_item_id]
+        incoming = Decimal(str(dl.quantity))
+        amount = receipt_line_total(incoming, line.unit_price)
+        total_received_amount += amount
+
+        db.add(
+            DeliveryLine(
+                delivery_id=delivery.id,
+                po_line_id=line.id,
+                inventory_item_id=item.id,
+                quantity_received=incoming,
+                unit_price=line.unit_price,
+                line_total=amount,
+            )
+        )
+        db.add(
+            StockMovement(
+                item_id=item.id,
+                recorded_by=user.id,
+                movement_type=MovementType.RECEIVED,
+                quantity=incoming,
+                po_line_id=line.id,
+                note=f"Received against PO {po.po_number}",
+            )
+        )
+        item.quantity_on_hand = float(item.quantity_on_hand) + float(incoming)
+        line.received_quantity = line.received_quantity + incoming
+        if line.inventory_item_id is None:
+            line.inventory_item_id = item.id
+
+        db.add(
+            JobCost(
+                project_id=project.id,
+                cost_code=line.cost_code,
+                description=f"PO {po.po_number} — {line.description}",
+                amount=float(amount),
+                incurred_on=now.date(),
+                po_line_id=line.id,
+            )
+        )
+
+    await refresh_budget_spent(db, project)
+
+    old_status = po.status
+    po.status = derive_received_status(
+        [(line.quantity, line.received_quantity) for line in po_lines.values()]
+    )
+    await db.flush()
+
+    await record_audit(
+        db,
+        user_id=user.id,
+        action="po_receive",
+        table_name="deliveries",
+        record_id=str(delivery.id),
+        changes={
+            "po_id": {"old": None, "new": str(po.id)},
+            "po_number": {"old": None, "new": po.po_number},
+            "reference": {"old": None, "new": payload.reference},
+            "line_count": {"old": None, "new": len(payload.lines)},
+            "received_total": {"old": None, "new": float(total_received_amount)},
+            "status": {"old": old_status.value, "new": po.status.value},
+        },
+    )
+
+    await notify_po_received(
+        db,
+        project.id,
+        po.po_number,
+        po.created_by,
+        fully_received=po.status == POStatus.RECEIVED,
+        line_count=len(payload.lines),
+    )
+
+    # Transient read fields are attached before idempotency finalization; they
+    # survive IdempotencyGuard.finish()'s refresh (transient attributes are not
+    # ORM-tracked — the M14 line_total precedent) and are re-serialized verbatim
+    # on a replayed retry.
+    setattr(delivery, "line_count", len(payload.lines))
+    setattr(delivery, "po_status_after", po.status.value)
+    await idem.finish(
+        db, status_code=status.HTTP_201_CREATED, response_model=DeliveryRead, obj=delivery
+    )
+    await db.commit()
+    return delivery
+
+
+@router.get("/{po_id}/deliveries", response_model=list[DeliveryRead])
+async def list_deliveries(
+    project_id: uuid.UUID,
+    po_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[User, Depends(admin_proc)],
+):
+    """Receipt history for a PO, newest first (admin/procurement only). A
+    cross-project PO id -> 404 (IDOR doctrine)."""
+    result = await db.execute(
+        select(PurchaseOrder.id).where(
+            PurchaseOrder.id == po_id, PurchaseOrder.project_id == project_id
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+
+    deliveries_result = await db.execute(
+        select(Delivery)
+        .where(Delivery.purchase_order_id == po_id, Delivery.project_id == project_id)
+        .options(selectinload(Delivery.lines))
+        .order_by(Delivery.verified_at.desc())
+    )
+    deliveries = deliveries_result.scalars().all()
+    for delivery in deliveries:
+        setattr(delivery, "line_count", len(delivery.lines))
+    return deliveries
+
+
+@router.get("/{po_id}/deliveries/{delivery_id}", response_model=DeliveryDetailRead)
+async def get_delivery(
+    project_id: uuid.UUID,
+    po_id: uuid.UUID,
+    delivery_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[User, Depends(admin_proc)],
+):
+    """One receipt with its per-line detail (description/unit attached from the
+    PO line). Cross-project delivery id -> 404."""
+    result = await db.execute(
+        select(Delivery)
+        .where(
+            Delivery.id == delivery_id,
+            Delivery.purchase_order_id == po_id,
+            Delivery.project_id == project_id,
+        )
+        .options(selectinload(Delivery.lines))
+    )
+    delivery = result.scalar_one_or_none()
+    if delivery is None:
+        raise HTTPException(status_code=404, detail="Delivery not found")
+
+    line_ids = [line.po_line_id for line in delivery.lines]
+    po_lines_map: dict[uuid.UUID, POLine] = {}
+    if line_ids:
+        r = await db.execute(select(POLine).where(POLine.id.in_(line_ids)))
+        po_lines_map = {pl.id: pl for pl in r.scalars().all()}
+    for line in delivery.lines:
+        po_line = po_lines_map.get(line.po_line_id)
+        if po_line is not None:
+            setattr(line, "description", po_line.description)
+            setattr(line, "unit", po_line.unit)
+
+    setattr(delivery, "line_count", len(delivery.lines))
+    return delivery

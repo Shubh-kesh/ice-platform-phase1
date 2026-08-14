@@ -20,6 +20,7 @@ from app.models.refresh_session import RefreshSession
 from app.models.notification import Notification, NotificationType
 from app.models.vendor import Vendor
 from app.models.purchase_order import POLine, POStatus, PurchaseOrder
+from app.models.delivery import Delivery, DeliveryLine
 
 __all__ = [
     "User",
@@ -54,4 +55,6 @@ __all__ = [
     "POLine",
     "POStatus",
     "PurchaseOrder",
+    "Delivery",
+    "DeliveryLine",
 ]

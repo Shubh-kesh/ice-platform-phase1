@@ -251,3 +251,33 @@ async def notify_po_rejected(
         body=f"Purchase order {po_number} was rejected",
         link=f"/projects/{project_id}",
     )
+
+
+async def notify_po_received(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    po_number: str,
+    created_by: uuid.UUID | None,
+    *,
+    fully_received: bool,
+    line_count: int,
+) -> None:
+    """M15 PO verified receipt -> PO creator + active admins (the M14
+    approve/reject pattern). One `po_received` type; the body distinguishes a
+    partial receipt from a full one. Receipts are single-fire events (a retried
+    M8 replay never re-runs one), so no duplicate notifications."""
+    if fully_received:
+        title = "Purchase order received"
+        body = f"Purchase order {po_number} fully received"
+    else:
+        title = "Purchase order partially received"
+        body = f"Purchase order {po_number} partially received ({line_count} line(s) received)"
+    await create_notifications(
+        db,
+        user_ids=await _creator_plus_active_admins(db, created_by),
+        project_id=project_id,
+        type_=NotificationType.PO_RECEIVED,
+        title=title,
+        body=body,
+        link=f"/projects/{project_id}",
+    )

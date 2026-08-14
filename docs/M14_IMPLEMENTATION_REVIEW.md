@@ -1,12 +1,15 @@
 # M14 — Vendors & Purchase Orders: Implementation Review
 
-**Status:** IMPLEMENTED + VERIFIED (pending owner review; nothing committed).
+**Status:** IMPLEMENTED + VERIFIED; **subsequently committed and pushed as
+`e8735d7`** on `claude-development` (up to date with origin). The technical
+verification findings below are preserved as written at review time.
 **Date:** Aug 14, 2026.
 **Plan:** `docs/M14_IMPLEMENTATION_PLAN.md` (canonical; not modified).
-**Branches/commits:** work on `claude-development`; HEAD was `36f166d`; nothing
-committed by this implementation.
-**Alembic head:** `k4c5d6e7f8a9` (M14) — repo + DB in sync; migration chain
-(upgrade → downgrade → replay) green.
+**Branches/commits:** implementation was verified with HEAD at `36f166d` and
+nothing committed by the implementation itself; the M14 work was later
+committed and pushed as `e8735d7`.
+**Alembic head:** `k4c5d6e7f8a9` (M14) — repo + DB in sync at review time;
+migration chain (upgrade → downgrade → replay) green.
 
 ---
 
@@ -219,4 +222,5 @@ S/C 403 everywhere with no PO notifications; COMPLETED freeze / ARCHIVED
 read-only; idempotent replay; atomic single-fire notifications; full regression
 suite (307) + migration chain + frontend build/lint + baseline-delta gates +
 live smoke (27/27) all green. Independent review found no FAILs (3 LOW items
-fixed post-review, §9). Nothing committed.
+fixed post-review, §9). Committed as `e8735d7` and pushed to
+`origin/claude-development`.

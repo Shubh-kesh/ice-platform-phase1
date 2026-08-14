@@ -17,6 +17,7 @@ class NotificationType(str, enum.Enum):
     PO_SUBMITTED = "po_submitted"
     PO_APPROVED = "po_approved"
     PO_REJECTED = "po_rejected"
+    PO_RECEIVED = "po_received"
 
 
 class Notification(Base):

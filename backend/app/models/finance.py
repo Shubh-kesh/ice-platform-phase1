@@ -112,6 +112,9 @@ class JobCost(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
     incurred_on: Mapped[date] = mapped_column(Date, nullable=False)
+    po_line_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("po_lines.id", ondelete="SET NULL"), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

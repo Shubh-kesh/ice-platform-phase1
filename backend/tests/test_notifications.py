@@ -378,6 +378,104 @@ async def test_po_rejected_notifies_creator_and_admins(
     assert len(await _notifications_of_type(client, admin, "po_rejected")) >= 1
 
 
+# --- M15 PO receipt event -----------------------------------------------------
+
+
+async def _receive_po(
+    client: httpx.AsyncClient,
+    header: str,
+    project_id: uuid.UUID,
+    po: dict,
+    quantity: float,
+) -> httpx.Response:
+    item = (
+        await client.post(
+            f"/api/v1/projects/{project_id}/inventory",
+            headers={"Authorization": header},
+            json={"name": "Cement", "unit": "bag"},
+        )
+    ).json()
+    return await client.post(
+        f"/api/v1/projects/{project_id}/purchase-orders/{po['id']}/receive",
+        headers={"Authorization": header},
+        json={
+            "reference": "DN-1",
+            "lines": [{"po_line_id": po["lines"][0]["id"], "quantity": quantity, "inventory_item_id": item["id"]}],
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_po_received_partial_notifies_creator_and_admins(
+    client: httpx.AsyncClient, test_admin_user, test_procurement_user, test_db, test_project
+):
+    admin = await auth_header(client, "admin@test.com")
+    vendor = await _make_vendor(client, admin)
+    po = await _make_and_submit_po(client, admin, test_project.id, vendor["id"])
+    await client.post(
+        f"/api/v1/projects/{test_project.id}/purchase-orders/{po['id']}/approve",
+        headers={"Authorization": admin},
+    )
+
+    resp = await _receive_po(client, admin, test_project.id, po, quantity=4)
+    assert resp.status_code == 201, resp.text
+
+    received = await _notifications_of_type(client, admin, "po_received")
+    assert len(received) == 1
+    assert received[0]["title"] == "Purchase order partially received"
+    # Procurement is not a po_received recipient (PO creator + active admins).
+    proc = await auth_header(client, "procurement@test.com")
+    assert await _notifications_of_type(client, proc, "po_received") == []
+
+
+@pytest.mark.asyncio
+async def test_po_received_full_notifies_once(
+    client: httpx.AsyncClient, test_admin_user, test_procurement_user, test_db, test_project
+):
+    admin = await auth_header(client, "admin@test.com")
+    vendor = await _make_vendor(client, admin)
+    po = await _make_and_submit_po(client, admin, test_project.id, vendor["id"])
+    await client.post(
+        f"/api/v1/projects/{test_project.id}/purchase-orders/{po['id']}/approve",
+        headers={"Authorization": admin},
+    )
+
+    resp = await _receive_po(client, admin, test_project.id, po, quantity=10)
+    assert resp.status_code == 201, resp.text
+    assert (await _notifications_of_type(client, admin, "po_received"))[0]["title"] == "Purchase order received"
+
+    # A failed receive rolls its notification back; a receipt is single-fire.
+    resp = await _receive_po(client, admin, test_project.id, po, quantity=-5)
+    assert resp.status_code == 422
+    assert len(await _notifications_of_type(client, admin, "po_received")) == 1
+
+
+@pytest.mark.asyncio
+async def test_po_received_none_to_supervisor_or_client(
+    client: httpx.AsyncClient,
+    test_admin_user,
+    test_supervisor_user,
+    test_client_user,
+    test_db,
+    test_project,
+):
+    await assign_user_to_project(test_db, test_project.id, test_supervisor_user.id)
+    await assign_user_to_project(test_db, test_project.id, test_client_user.id)
+    admin = await auth_header(client, "admin@test.com")
+    vendor = await _make_vendor(client, admin)
+    po = await _make_and_submit_po(client, admin, test_project.id, vendor["id"])
+    await client.post(
+        f"/api/v1/projects/{test_project.id}/purchase-orders/{po['id']}/approve",
+        headers={"Authorization": admin},
+    )
+    assert (await _receive_po(client, admin, test_project.id, po, quantity=10)).status_code == 201
+
+    sup = await auth_header(client, "supervisor@test.com")
+    cli = await auth_header(client, "client@test.com")
+    assert await _notifications_of_type(client, sup, "po_received") == []
+    assert await _notifications_of_type(client, cli, "po_received") == []
+
+
 @pytest.mark.asyncio
 async def test_po_notifications_none_to_supervisor_or_client(
     client: httpx.AsyncClient,

@@ -51,6 +51,7 @@ class StockMovementRead(BaseModel):
     recorded_by: uuid.UUID | None
     movement_type: MovementType
     quantity: float
+    po_line_id: uuid.UUID | None
     note: str | None
     created_at: datetime
 

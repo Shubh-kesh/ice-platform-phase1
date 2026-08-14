@@ -617,3 +617,50 @@ with line items and an audited lifecycle. Committed? No (review in progress).
   edit recomputes total; idempotent create replay; archive → write 403, read OK.
 - **Docs:** `docs/CURRENT_STATE.md`, `docs/ROADMAP.md`, `docs/SESSION_NOTES.md`
   (this entry), `docs/M14_IMPLEMENTATION_REVIEW.md`. Nothing committed.
+
+---
+
+## Session note — M15 step 1 + dev-DB/Docker reconciliation (Aug 14, 2026)
+
+Session on branch `claude-development` (HEAD `e8735d7`), nothing committed.
+
+**1. M15 plan approved + step 1 landed (uncommitted).** All 17 §33 owner
+decisions of `docs/M15_IMPLEMENTATION_PLAN.md` approved as written (`CLOSED`
+NOT included). Step 1 (migration + models + schemas + migration tests) is
+implemented:
+- Migration `l5d6e7f8a9b0` — additive: `ALTER TYPE po_status ADD VALUE
+  PARTIALLY_RECEIVED/RECEIVED` (no backfill), `po_lines.received_quantity` +
+  `inventory_item_id`, `stock_movements.po_line_id` (+index), `job_costs.po_line_id`,
+  new `deliveries`/`delivery_lines` (append-only evidence; RESTRICT FKs on
+  po_line/inventory_item; snapshotted unit_price/line_total).
+- Models: `app/models/delivery.py` (Delivery, DeliveryLine); POStatus +2
+  members; StockMovement.po_line_id; JobCost.po_line_id; `models/__init__.py`
+  exports.
+- Schemas: `app/schemas/delivery.py` (DeliveryCreate/DeliveryRead flat +
+  DeliveryLineCreate/DeliveryLineRead); `POLineRead` += received_quantity/
+  received_remaining/inventory_item_id.
+- Tests: `test_migrations.py` HEAD → `l5d6e7f8a9b0` + new table/column/enum
+  assertions (up and down). Full suite **307 passing**; migration chain
+  (upgrade → downgrade → replay) green; ruff 2/mypy 10/oxlint 1 delta gates
+  PASS.
+
+**2. Dev DB was stale — fixed via image rebuild.** The compose backend
+bind-mounts only `backend/app`; `alembic/versions` is baked into the image. The
+running image predated M14, so startup `alembic upgrade head` was a silent
+no-op while live `app/` ran M14 code → `relation "vendors" does not exist`.
+Fixed: `docker compose build backend && docker compose up -d backend`; startup
+migrated `j8e9f0a1b2c3 → k4c5d6e7f8a9 → l5d6e7f8a9b0`; health OK; dev DB
+verified at `l5d6e7f8a9b0` with all new tables/enum values. **Workflow rule
+added:** rebuild the backend image after every migration change.
+
+**3. Implementation notes (step 1).** `POLineRead.received_remaining` is a
+plain defaulted field (setattr doctrine, like `line_total`) because Pydantic
+`computed_field` adds a mypy `[prop-decorator]` finding that fails the delta
+gate; the PO serializer must attach the real value. `deliveries.verified_by`/
+`created_by` are nullable + `ON DELETE SET NULL` (repo attribution-FK
+convention); the app layer always populates them.
+
+**4. Next step.** M15 receiving service + API per plan §34 (steps 4–10):
+`services/receiving.py`, receive + deliveries endpoints in
+`api/v1/purchase_orders.py`, cancel guard, `po_received` notification, `tests/
+test_receiving.py`, frontend, docs + smoke + `docs/M15_IMPLEMENTATION_REVIEW.md`.

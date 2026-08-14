@@ -76,6 +76,9 @@ class StockMovement(Base):
         Enum(MovementType, name="movement_type"), nullable=False
     )
     quantity: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    po_line_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("po_lines.id", ondelete="SET NULL"), nullable=True
+    )
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(

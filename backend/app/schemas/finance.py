@@ -33,6 +33,7 @@ class JobCostRead(JobCostBase):
 
     id: uuid.UUID
     project_id: uuid.UUID
+    po_line_id: uuid.UUID | None = None
     created_at: datetime
 
 
