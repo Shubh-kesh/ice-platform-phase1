@@ -31,7 +31,8 @@ import type {
   VendorUpdateInput,
 } from "../types";
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000/api/v1";
+export const API_URL =
+  import.meta.env.VITE_API_URL ?? "http://localhost:8000/api/v1";
 
 const REFRESH_TOKEN_KEY = "ice_refresh_token";
 
@@ -48,6 +49,10 @@ let accessToken: string | null = null;
 
 export function setAccessToken(token: string | null) {
   accessToken = token;
+}
+
+export function getAccessToken(): string | null {
+  return accessToken;
 }
 
 export function getStoredRefreshToken(): string | null {

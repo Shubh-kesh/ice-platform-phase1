@@ -3,6 +3,7 @@ import { Login } from "./pages/Login";
 import { GoogleCallback } from "./pages/GoogleCallback";
 import { CommandCenter } from "./pages/CommandCenter";
 import { ProjectDetail } from "./pages/ProjectDetail";
+import { Assistant } from "./pages/Assistant";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
 export default function App() {
@@ -25,6 +26,14 @@ export default function App() {
         element={
           <ProtectedRoute>
             <ProjectDetail />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/assistant"
+        element={
+          <ProtectedRoute>
+            <Assistant />
           </ProtectedRoute>
         }
       />

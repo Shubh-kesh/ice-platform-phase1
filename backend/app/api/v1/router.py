@@ -13,6 +13,7 @@ from app.api.v1 import (
     notifications,
     vendors,
     purchase_orders,
+    assistant,
 )
 
 api_router = APIRouter()
@@ -28,3 +29,4 @@ api_router.include_router(invoicing.router)
 api_router.include_router(notifications.router)
 api_router.include_router(vendors.router)
 api_router.include_router(purchase_orders.router)
+api_router.include_router(assistant.router)

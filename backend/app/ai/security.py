@@ -1,0 +1,86 @@
+"""
+ICE Copilot security layer.
+
+The HARD boundary is per-tool deterministic authorization: every tool checks
+the authenticated actor against the same role/project rules the REST API
+enforces. The per-role allow-list below is DEFENSE IN DEPTH only — it prunes
+the tool menu the model sees, but a tool that somehow reaches the model still
+rejects unauthorized access on its own.
+
+The model can never supply identity facts: tools read them from
+`ToolRuntime.context` (the injected ActorContext), never from arguments.
+"""
+from __future__ import annotations
+
+from app.models.user import UserRole
+
+# The seven AI-1 tool names (single source shared by the registry and tests).
+TOOL_LIST_PROJECTS = "list_projects"
+TOOL_GET_PROJECT = "get_project"
+TOOL_GET_PROJECT_HEALTH = "get_project_health"
+TOOL_GET_PROJECT_BUDGET = "get_project_budget"
+TOOL_GET_PROJECT_INVENTORY = "get_project_inventory"
+TOOL_GET_PURCHASE_ORDERS = "get_purchase_orders"
+TOOL_GET_MY_NOTIFICATIONS = "get_my_notifications"
+
+_ALL_TOOLS = frozenset(
+    {
+        TOOL_LIST_PROJECTS,
+        TOOL_GET_PROJECT,
+        TOOL_GET_PROJECT_HEALTH,
+        TOOL_GET_PROJECT_BUDGET,
+        TOOL_GET_PROJECT_INVENTORY,
+        TOOL_GET_PURCHASE_ORDERS,
+        TOOL_GET_MY_NOTIFICATIONS,
+    }
+)
+
+# Exact REST-equivalent tool menu per role (mirrors the route role gates; see
+# the RBAC matrix in the AI-1 plan §10). Clients only ever get the M6 client
+# portal surfaces: projects (restricted shape) + their own notifications.
+ROLE_ALLOWED_TOOLS: dict[UserRole, frozenset[str]] = {
+    UserRole.ADMIN: _ALL_TOOLS,
+    UserRole.PROCUREMENT_MANAGER: _ALL_TOOLS,
+    UserRole.SITE_SUPERVISOR: frozenset(
+        {
+            TOOL_LIST_PROJECTS,
+            TOOL_GET_PROJECT,
+            TOOL_GET_PROJECT_HEALTH,
+            TOOL_GET_PROJECT_INVENTORY,
+            TOOL_GET_MY_NOTIFICATIONS,
+        }
+    ),
+    UserRole.CLIENT: frozenset(
+        {
+            TOOL_LIST_PROJECTS,
+            TOOL_GET_PROJECT,
+            TOOL_GET_MY_NOTIFICATIONS,
+        }
+    ),
+}
+
+
+class ToolError(Exception):
+    """Base class for controlled ICE Copilot tool failures."""
+
+
+class ToolForbidden(ToolError):
+    """The actor is not permitted to perform this operation (REST 403-equiv)."""
+
+
+class ToolNotFound(ToolError):
+    """The requested entity does not exist or is not visible (REST 404-equiv)."""
+
+
+def tools_for_role(role: UserRole) -> frozenset[str]:
+    """Names of the tools this role may be given (defense in depth)."""
+    return ROLE_ALLOWED_TOOLS[role]
+
+
+def assert_tool_allowed(role: UserRole, tool_name: str) -> None:
+    """Reject tool calls whose name is outside the role's menu.
+
+    Defense-in-depth only — each tool re-authorizes internally regardless.
+    """
+    if tool_name not in tools_for_role(role):
+        raise ToolForbidden(f"Tool '{tool_name}' is not permitted for role '{role.value}'")

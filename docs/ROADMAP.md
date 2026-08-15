@@ -6,6 +6,13 @@
 
 > **Aug 10 change:** two requirements added to **Phase 3** as mandates — **Project Lifecycle & Admin** (M10) and **Google Sign-In** (M11). Both were flagged after M4 shipped; they gate real-user rollout (M11) and make the Command Center and every downstream phase operate on lifecycle-aware, DB-driven projects instead of seed/demo data (M10). See the Phase 3 milestone sequence below.
 
+> **Aug 15 note — separate AI learning workstream:** a concurrently-running AI
+> workstream (an in-product **ICE Copilot**, AI-1 complete, AI-2 next) is
+> tracked in `docs/AI_ASSISTANT_ROADMAP.md`, NOT in this product roadmap.
+> It is a distinct stream from the Phase-7 product AI/ML features below
+> (predictive delay / CV-QC / BOQ). M-series development remains paused
+> separately while that workstream runs.
+
 ---
 
 ## Prioritization legend
@@ -188,14 +195,14 @@ Ordering rationale:
 
 **Goal:** The procurement pillar: purchase orders, delivery verification, and inventory spanning warehouse → transit → site with schedule-driven restocking.
 
-**Status (Aug 14, 2026):** the first milestone (**M14 — Vendors + Purchase Orders**, the "vendor entity + PO entity + PO lifecycle + approval workflow" MUST/SHOULD items below) is DONE and test-pinned. **M15 — delivery verification/receiving — is IN PROGRESS** (schema + models + migration `l5d6e7f8a9b0` landed per `docs/M15_IMPLEMENTATION_PLAN.md`; receiving API/service, notifications, and frontend pending). The location dimension and the demand forecast are **NOT started** (M16). Vendor performance tracking (on-time %, price) is blocked on M15 delivery data.
+**Status (Aug 15, 2026):** the first milestone (**M14 — Vendors + Purchase Orders**, the "vendor entity + PO entity + PO lifecycle + approval workflow" MUST/SHOULD items below) is DONE and test-pinned. **M15 — delivery verification/receiving — is DONE** (committed at HEAD `9bfe711`, not pushed): migration `l5d6e7f8a9b0`, receiving API/service, `po_receive` audit + notifications, and the frontend receive UI are implemented; a verified receipt is the only path that releases stock + costs. The location dimension and the demand forecast are **NOT started** (M16). Vendor performance tracking (on-time %, price) is blocked on M15 delivery data.
 
 **Business value:** High — this is where material spend is controlled; PO verification prevents paying for unverified goods; 3-location tracking reduces stockouts/misplacement across 15 sites.
 
 **Features**
 - **MUST:** Vendor entity (name/contact/payment terms) + vendor performance tracking (on-time %, price). — *vendor master data DONE (M14); performance tracking pending (needs M15 delivery data)*
 - **MUST:** Purchase Order entity (vendor, lines, quantities, project, status) + PO lifecycle. — *DONE (M14)*
-- **MUST:** Delivery verification — QR-code scan **or** photo-verified receipt against PO lines; verified receipt releases stock into inventory and triggers cost entries. — *IN PROGRESS (M15: schema/models landed; receiving API + job-cost/stock release pending)*
+- **MUST:** Delivery verification — QR-code scan **or** photo-verified receipt against PO lines; verified receipt releases stock into inventory and triggers cost entries. — *DONE (M15: migration `l5d6e7f8a9b0` + receiving API/service + `po_receive` audit/notifications + frontend receive UI; committed `9bfe711`, not pushed)*
 - **MUST:** Location dimension: `warehouse` / `transit` / `site` for inventory; transfers between locations recorded as movements. — *NOT STARTED (M16)*
 - **MUST:** Low-stock **forecast** alerts using next-7-days-scheduled demand (from tasks + BOQ/BOM) rather than static thresholds. — *NOT STARTED (M16; needs a Phase 4 worker)*
 - **SHOULD:** Approval workflow: Procurement creates PO → (optional) Admin approve → receive. — *approval workflow DONE (M14, mandatory — no auto-approve bypass)*

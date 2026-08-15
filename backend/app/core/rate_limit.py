@@ -14,3 +14,4 @@ AUTH_RATE_LIMIT = "5/minute"  # 5 attempts per minute per IP
 REFRESH_RATE_LIMIT = "10/minute"  # 10 refresh attempts per minute per IP
 LOGOUT_RATE_LIMIT = "10/minute"  # 10 logout attempts per minute per IP
 GOOGLE_RATE_LIMIT = "10/minute"  # 10 Google authorize/callback attempts per minute per IP
+ASSISTANT_RATE_LIMIT = "10/minute"  # 10 ICE Copilot chat requests per minute per IP (AI-1)

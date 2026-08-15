@@ -18,31 +18,31 @@ provisioned but unused. Source of product vision:
 
 ## 2. Current Repository State
 
-- **Branch:** `claude-development`; **HEAD:** `e8735d7` (feat: add vendors and
-  purchase orders — M14), **up to date with origin/claude-development**.
-- **M14 (`e8735d7`) is committed AND pushed.** The M6 close-out (`7795890`)
-  and M13 (`3315957`) are committed and pushed. Working tree carries only
-  documentation housekeeping edits (see `docs/SESSION_HANDOFF.md`).
+- **Branch:** `claude-development`; **HEAD:** `9bfe711` (feat: implement M15
+  purchase order receiving), **ahead of `origin/claude-development` by 1**
+  (M15 committed, **not pushed**).
+- **AI-1 — ICE Copilot: COMPLETE and verified SAFE TO COMMIT (uncommitted).**
+  Working tree carries the entire AI-1 change set (backend `app/ai/` +
+  `api/v1/assistant.py`, AI tests, frontend `/assistant`, config/requirements,
+  `backend/ai_labs/`, and the four canonical AI docs). See
+  `docs/AI1_IMPLEMENTATION_REVIEW.md` and `docs/SESSION_HANDOFF.md`.
 - **Alembic repository head:** `l5d6e7f8a9b0` (M15 `receiving/deliveries`).
   The migration chain (upgrade → downgrade → replay) is chain-tested through
   this revision in `backend/tests/test_migrations.py`
   (`HEAD_REVISION = "l5d6e7f8a9b0"`).
-- **Live dev DB: verified at `l5d6e7f8a9b0`** (Aug 14, 2026) — Docker is up
-  (`ice-platform-*` healthy); the dev DB was migrated from `j8e9f0a1b2c3` by
-  rebuilding the backend image (see §10 dev-workflow note).
-- **Backend tests:** **307 passing** (verified Aug 14, 2026 against real
-  Postgres), including 13 M14 vendor, 32 M14 purchase-order, 18 notification,
-  21 M12 scheduling, 20 M11 Google, 17 M6 client-portal, and the Alembic
+- **Live dev DB: verified at `l5d6e7f8a9b0`** (Aug 15, 2026) — Docker up
+  (`ice-platform-*` healthy); Vite dev server on `:5173`.
+- **Backend tests:** **390 passing** (verified Aug 15, 2026 against real
+  Postgres), including **56 AI tests** (tools/RBAC, agent loop, SSE API,
+  provider factory) plus the full M1–M15 suite and the Alembic
   upgrade/downgrade/replay chain through `l5d6e7f8a9b0`.
-- **Frontend:** `npm run build` passes; `npm run lint` passes with 1
-  pre-existing warning (`auth-context.tsx` Fast Refresh).
+- **Frontend:** `npm run build` passes; oxlint delta gate PASS (1 pre-existing
+  `auth-context.tsx` Fast-Refresh warning).
 - **Quality gates:** ruff 2 / mypy 10 / oxlint 1 baselines met (delta gates
   PASS); `git diff --check` clean.
-- **Working tree:** prior docs housekeeping edits PLUS **M15 step-1
-  implementation, uncommitted** — migration `l5d6e7f8a9b0`, `models/delivery.py`,
-  `schemas/delivery.py`, PO/inventory/finance model + PO-line schema
-  extensions, and `test_migrations.py` HEAD update. Receiving routes/service/
-  notifications/frontend/smoke not yet implemented (M15 in progress — §12).
+- **Working tree (uncommitted):** the AI-1 change set only. M15 is committed at
+  HEAD (`9bfe711`). No migration beyond `l5d6e7f8a9b0`; no application behavior
+  changed outside the AI module + its router/config/requirements.
 - **Phase 4 production infrastructure (P4.2–P4.6):** intentionally **deferred**
   (owner decisions pending; see §4). P4.1 (CI/CD quality gates) is complete,
   committed, and CI-verified.
@@ -84,10 +84,60 @@ Chronological (all committed unless noted):
   numbering, audited DRAFT→PENDING_APPROVAL→APPROVED lifecycle (admin-only
   approve/reject), M8 idempotency on PO/line create, M13 PO notifications.
   **No receiving/verification, no job-cost/stock impact yet (M15).**
-- **M15 — PO Delivery Verification / Receiving (IN PROGRESS, uncommitted):**
-  step 1 (migration `l5d6e7f8a9b0` + models + schemas + migration tests)
-  landed per `docs/M15_IMPLEMENTATION_PLAN.md`; receiving API/service/
-  notifications/frontend/smoke pending. See §12.
+- **M15 — PO Delivery Verification / Receiving (DONE, committed at HEAD
+  `9bfe711`, not pushed):** migration `l5d6e7f8a9b0`, `deliveries`/
+  `delivery_lines`, `po_lines.received_quantity`/`inventory_item_id`,
+  `stock_movements.po_line_id`, `job_costs.po_line_id`, receiving routes +
+  `services/receiving.py`, `po_receive` audit + `po_received` notifications,
+  cancel guard, `test_receiving.py`, frontend receive UI. A verified receipt is
+  the ONLY path that releases PO quantity into inventory/costs. See
+  `docs/M15_IMPLEMENTATION_PLAN.md`.
+- **AI-1 — ICE Copilot (DONE, verified SAFE TO COMMIT, uncommitted):** the AI
+  learning workstream's first milestone — see §3b.
+
+## 3b. AI Workstream — AI-1 (ICE Copilot)
+
+A separate, concurrently-running AI-learning workstream (M-series development
+is paused). AI-1 delivered an authenticated, read-only, role-aware Copilot
+integrated into the SPA. Canonical AI docs: `docs/AI_ASSISTANT_ROADMAP.md`
+(architecture/course mapping), `docs/AI1_IMPLEMENTATION_PLAN.md` (plan),
+`docs/AI1_IMPLEMENTATION_REVIEW.md` (technical record),
+`docs/AI1_IMPLEMENTATION_SUMMARY.md` (plain-language). Highlights:
+
+- **Backend `app/ai/`**: `ActorContext` (frozen `user_id`+`role`) injected via
+  `ToolRuntime.context` (never model args); seven read-only tools
+  (`list_projects`, `get_project`, `get_project_health`, `get_project_budget`,
+  `get_project_inventory`, `get_purchase_orders`, `get_my_notifications`) with
+  hard per-tool RBAC (REST-equivalent) + role-filtered catalog as
+  defense-in-depth; M6 client isolation preserved; bounded, ORM-free results.
+- **Multi-provider model factory** (`build_model`): openai / anthropic / groq /
+  openrouter (ChatOpenAI + base_url). Provider/model/base_url/keys are
+  server-controlled; `ICE_AI_{PROVIDER}_API_KEY` → `ICE_AI_API_KEY` precedence.
+- **Streaming SSE API**: `POST /api/v1/assistant/chat` (auth + 10/min/IP rate
+  limit, `assistant_start|token|tool_started|tool_finished|assistant_complete|
+  error` events, usage/latency metrics); `GET /api/v1/assistant/capabilities`.
+- **Frontend**: React `/assistant` page (`Assistant.tsx`, `AssistantChat.tsx`,
+  `lib/assistant.ts` fetch+ReadableStream SSE parser, `types/assistant.ts`).
+- **Runtime-context API**: the PUBLIC LangChain v1 mechanism —
+  `create_agent(..., context_schema=ActorContext)` + invocation `context=actor`
+  + tools typed `runtime: ToolRuntime[ActorContext]`. The internal
+  `CONFIG_KEY_RUNTIME`/manual-`Runtime` path is removed; no serializer warning.
+- **Safe execution logging**: structured `event=... request_id=...` lines on
+  the `ice.ai` logger (`app/ai/logging.py`) — NORMAL (run/model/tool/stream/
+  run.completed metrics) vs DEBUG (`ICE_AI_DEBUG=true`, adds sanitized query,
+  tool args, result summaries, message-type trace). Execution tracing only —
+  no chain-of-thought, no secrets, no raw payloads.
+- **Pinned AI deps:** langchain 1.3.15 · core 1.5.5 · openai-int 1.5.1 ·
+  anthropic-int 1.5.6 · groq-int 1.1.3 · langgraph 1.2.11 family (pinned) ·
+  openai 2.54.0.
+- **Verified:** backend 390 (56 AI), frontend build + oxlint, ruff/mypy/oxlint
+  deltas PASS, real-provider smoke (openrouter free model), real Docker-DB
+  smoke, client prompt-injection smoke (no budget leak), no mutation, no
+  migration.
+- **AI-1 limitations (deliberate):** stateless (no memory), read-only (no
+  mutators), no web search, no middleware, no RAG/vector/MCP/multi-agent.
+- **Next AI milestone: AI-2 — Conversation Intelligence** (memory/checkpointing,
+  conversation context, summarization). Not started.
 
 ## 4. Deferred / Explicitly Out-of-Scope Work
 
@@ -98,17 +148,22 @@ Chronological (all committed unless noted):
   decisions unapproved); plan: `docs/PHASE4_IMPLEMENTATION_PLAN.md`.
   **Recommended stack (unapproved):** GCP Cloud Run + Cloud SQL + Memorystore
   + Secret Manager + Workload Identity.
-- **M14 deferred scope (Phase 5):** delivery verification/receiving (M15),
-  multi-location inventory (M16), 7-day demand forecast (M16), vendor
+- **M14 deferred scope (Phase 5):** delivery verification/receiving (M15 —
+  DONE), multi-location inventory (M16), 7-day demand forecast (M16), vendor
   performance tracking (needs M15 delivery data).
 - **Email/SMS/web-push notification delivery** — M13 is in-app only; external
   delivery needs a provider + secret management (deferred).
 - **7-day low-stock demand forecast** — static reorder-threshold alerts only;
   forecast is Phase 5 (needs a worker).
-- **Phase 5** (vendors/POs done M14; receiving M15; locations/forecast M16),
-  **Phase 6** (daily-log photos + voice-to-text, offline, quality hold-points,
-  attendance), **Phase 7** (AI/ML), **Phase 8** (scale/SSO/compliance) —
-  planned, not started beyond M14.
+- **Phase 5 remainder** (locations/forecast M16), **Phase 6** (daily-log photos
+  + voice-to-text, offline, quality hold-points, attendance), **Phase 7** (the
+  product's own AI/ML: predictive delay / CV-QC / BOQ), **Phase 8**
+  (scale/SSO/compliance) — planned; **M-series development is paused** while
+  the AI learning workstream (AI-1 done, AI-2 next) runs.
+- **AI-1 limitations (deferred by design):** memory/checkpointing (AI-2), web
+  search (AI-3), limits/fallback/PII/retry middleware (AI-4), tool selector
+  (AI-5), HITL + mutating tools (AI-6), RAG/vector DB/MCP/multi-agent (parking
+  lot).
 - **httpOnly refresh-cookie transport** — M9-deferred; requires HTTPS env.
 - **Frontend automated/E2E tests** — deferred (Playwright smoke is Phase 4).
 
@@ -116,9 +171,9 @@ Chronological (all committed unless noted):
 
 - **Development/demo:** Docker Compose (PostgreSQL 16, Redis 7, backend on
   `:8000` via gunicorn/uvicorn); frontend served by Vite dev server on
-  `:5173`. Redis is provisioned but **unused by any code**. **Docker/dev DB
-  is currently down** — start `docker compose up -d postgres` before relying
-  on the live DB.
+  `:5173`. Redis is provisioned but **unused by any code**. **Docker is
+  currently up** (verified Aug 15, 2026); if down, start
+  `docker compose up -d postgres` before relying on the live DB.
 - **Deployment target (documented, not built):** Render.com for feature/demo
   per the roadmap; Phase 4 production rails (IaC/secrets/observability) are
   deferred. GCP/Cloud Run is the recommended Phase 4 stack (unapproved).
@@ -141,11 +196,17 @@ Chronological (all committed unless noted):
 | Product vision | `docs/PRODUCT_REQUIREMENTS.md` (SRS-derived) |
 | Prior comprehensive audit | `docs/TECHNICAL_AUDIT.md` |
 | Phase 4 infrastructure decision pass | `docs/P4.2_INFRASTRUCTURE_DECISION_REPORT.md` |
+| AI workstream roadmap (course mapping, AI-0) | `docs/AI_ASSISTANT_ROADMAP.md` |
+| AI-1 approved scope (pre-implementation) | `docs/AI1_IMPLEMENTATION_PLAN.md` |
+| AI-1 technical canonical record | `docs/AI1_IMPLEMENTATION_REVIEW.md` |
+| AI-1 plain-language learning summary | `docs/AI1_IMPLEMENTATION_SUMMARY.md` |
 
 Order of trust: **code/tests > CURRENT_STATE.md > milestone reviews > plans >
 ROADMAP.md > older docs**. `ARCHITECTURE.md` is older (Aug 9) and predates
-M10–M14 endpoints; treat its structure as valid but verify current endpoint
-surfaces in code.
+M10–M15 + AI-1 surfaces; treat its structure as valid but verify current
+endpoint surfaces in code. AI docs: `AI1_IMPLEMENTATION_REVIEW.md` is the
+technical record; `AI1_IMPLEMENTATION_SUMMARY.md` is the simple learning
+reference; do not duplicate their detail into this file.
 
 ## 7. RBAC / Security Invariants
 
@@ -181,6 +242,15 @@ surfaces in code.
   holds under concurrent line edits (test-pinned).
 - **Migration discipline:** additive Alembic revisions in one linear chain;
   upgrade/downgrade/replay is chain-tested; destructive downgrades guarded.
+- **AI Copilot invariants (AI-1):** identity is injected via `ToolRuntime.
+  context` using the public `context_schema=ActorContext` + `context=` API
+  (frozen `ActorContext{user_id, role}`) — never a model argument; every AI
+  tool independently enforces the same REST-equivalent RBAC; the role-filtered
+  tool catalog is defense-in-depth only; client AI tools == the M6 client
+  portal set; no `execute_sql`/generic DB tool exists; all AI tools are
+  read-only; provider/model/base_url/API keys are server-controlled and never
+  accepted from the chat request; execution logging is sanitized and never
+  logs secrets, identity args, raw results, or chain-of-thought.
 
 ## 8. Database / Migration State
 
@@ -207,7 +277,8 @@ surfaces in code.
 ## 9. Test / Quality Baseline
 
 - **Backend:** `pytest` (async, real Postgres; disposable `ice_test_db`):
-  **307 passing** (verified Aug 14, 2026). Includes the migration-chain test
+  **390 passing** (verified Aug 15, 2026) — full M1–M15 suite **plus 56 AI
+  tests** (AI-1 incl. the execution-logging suite). Includes the migration-chain test
   (`backend/tests/test_migrations.py`) through `l5d6e7f8a9b0` (M15).
 - **Frontend:** `npm run build` (tsc + vite) passes; `npm run lint` (oxlint)
   passes with 1 pre-existing `auth-context.tsx` Fast-Refresh warning.
@@ -269,37 +340,18 @@ Sequencing guardrail: no phase ships to production without Phase 4 rails; if a
 cut is forced, preserve Phase 3 → Phase 4 → Phase 6 → Phase 7 (procurement is
 the most safe to trim/reorder).
 
-## 12. Current Milestone — M15 (in progress)
+## 12. Current Milestones
 
-**M15 — PO Delivery Verification / Receiving** (Phase 5 milestone 2):
-verified receipt against PO lines is the only path that releases stock into
-inventory + creates `job_costs` entries. Reuses the M1 ledger, M8 idempotency,
-M13 notifications, M10 lifecycle gating; no Phase 4 infrastructure dependency.
-**Approved plan:** `docs/M15_IMPLEMENTATION_PLAN.md` (all 17 §33 owner decisions
-approved; `CLOSED` status NOT included).
+**M15 — PO Delivery Verification / Receiving — DONE** (committed at HEAD
+`9bfe711`, **not pushed**). A verified receipt is the only path that releases
+stock into inventory + creates `job_costs` entries; partial receiving; receipts
+append-only; `po_receive` audit + `po_received` notifications. Approved plan:
+`docs/M15_IMPLEMENTATION_PLAN.md`.
 
-**Status — step 1 landed, uncommitted:** migration `l5d6e7f8a9b0` + M15 models
-(`Delivery`/`DeliveryLine`; `POStatus` extension; PO-line/inventory/job-cost
-columns) + schemas (`schemas/delivery.py`, PO-line received fields) +
-migration-chain tests. Receiving routes/service, notifications, frontend, and
-smoke tests are the remaining steps.
-
-**Approved M15 scope:**
-- **Verified receiving/release first:** mark PO lines received
-  (`received_quantity`, `stock_movements.po_line_id`, `job_costs` release),
-  partial-receipt semantics (a 2-of-3-line PO releases only the verified
-  lines), server-derived quantities.
-- **Photo-reference/manual evidence, NOT full GCS upload:** no file-upload
-  surface exists yet; the full GCS signed-upload pipeline is a Phase 6 item.
-  M15 should use a photo *reference* / manual-verify evidence field, deferring
-  real file storage to Phase 6.
-- **Extension:** `POStatus` extended additively (e.g. `PARTIALLY_RECEIVED` /
-  `RECEIVED`); notification + audit hooks; vendor-performance data collection
-  seeds.
-
-**Next step:** M15 receiving service + API (plan §34 sequence), then
-notifications, frontend, smoke tests, and the
-`docs/M15_IMPLEMENTATION_REVIEW.md` record.
+**AI-1 — ICE Copilot — DONE** (verified SAFE TO COMMIT, **uncommitted**; see §3b).
+**Next: AI-2 — Conversation Intelligence** (memory/checkpointing, conversation
+context, summarization) — not started. M-series development remains paused
+separately (next product milestone after M15 would be M16).
 
 ## 13. How a Fresh OpenCode Session Must Reconstruct Context
 
@@ -308,7 +360,9 @@ notifications, frontend, smoke tests, and the
 3. Read `docs/SESSION_HANDOFF.md` (if present) for the latest continuation
    state — it is a snapshot, not authority over code/tests.
 4. Read the relevant milestone implementation plan (before) / review (after)
-   for the active milestone.
+   for the active milestone — for the AI workstream that means
+   `docs/AI1_IMPLEMENTATION_REVIEW.md` (technical) and
+   `docs/AI1_IMPLEMENTATION_SUMMARY.md` (plain-language) + the AI-1 plan.
 5. Inspect `git status`, `git log --oneline -5`, and branch tracking.
 6. Verify `alembic current` matches the repo head **after starting Docker**
    (the dev DB is currently down); reconcile the dev DB if it lags. Do not

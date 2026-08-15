@@ -7,6 +7,7 @@ import {
   ShieldCheck,
   LogOut,
   Building2,
+  Bot,
 } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { NotificationsBell } from "./NotificationsBell";
@@ -21,6 +22,7 @@ const ROLE_LABEL: Record<UserRole, string> = {
 
 const NAV_ITEMS = [
   { to: "/", label: "Command Center", icon: LayoutGrid },
+  { to: "/assistant", label: "ICE Copilot", icon: Bot },
   { to: "/inventory", label: "Inventory", icon: Boxes, phase: 2 },
   { to: "/finance", label: "Finance", icon: Receipt, phase: 2 },
   { to: "/quality", label: "Quality & Safety", icon: ShieldCheck, phase: 2 },

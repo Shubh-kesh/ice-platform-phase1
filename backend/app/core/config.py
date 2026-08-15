@@ -85,5 +85,27 @@ class Settings(BaseSettings):
     GCP_PROJECT_ID: str = ""
     GCS_BUCKET_NAME: str = ""
 
+    # ICE Copilot (Phase AI-1) — provider-agnostic via the LangChain model
+    # abstraction (init_chat_model). Provider/model/API keys come from env;
+    # secrets are never committed. Default provider is OpenAI but nothing in
+    # the AI module depends on it — swapping ICE_AI_PROVIDER / ICE_AI_MODEL
+    # (and setting the matching key) is enough to move providers. Fallback /
+    # retry middleware is an AI-4 concern.
+    ICE_AI_ENABLED: bool = False
+    ICE_AI_PROVIDER: str = "openai"  # openai | anthropic | groq | openrouter
+    ICE_AI_MODEL: str = "gpt-5-mini"
+    # Generic fallback API key; a provider-specific key takes precedence.
+    ICE_AI_API_KEY: str = ""
+    ICE_AI_OPENAI_API_KEY: str = ""
+    ICE_AI_ANTHROPIC_API_KEY: str = ""
+    ICE_AI_GROQ_API_KEY: str = ""
+    ICE_AI_OPENROUTER_API_KEY: str = ""
+    # Optional custom endpoint for OpenAI-compatible providers (a proxy such as
+    # opencode, or OpenRouter's api). Empty -> the provider's default endpoint.
+    ICE_AI_BASE_URL: str = ""
+    ICE_AI_TEMPERATURE: float = 0.0
+    ICE_AI_MAX_TOOL_RESULT_CHARS: int = 4000
+    ICE_AI_DEBUG: bool = False
+
 
 settings = Settings()

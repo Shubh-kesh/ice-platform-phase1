@@ -2,11 +2,11 @@
 # Keys are <path>:<line>:<message>[<code>], relative to the backend cwd.
 # Do NOT edit to mask a NEW error; update only when an error is genuinely
 # fixed (delete its line) or intentionally re-baselined with approval.
-app/core/config.py:89:Missing named argument "SECRET_KEY" for "Settings"[call-arg]
-app/core/config.py:89:Missing named argument "POSTGRES_SERVER" for "Settings"[call-arg]
-app/core/config.py:89:Missing named argument "POSTGRES_USER" for "Settings"[call-arg]
-app/core/config.py:89:Missing named argument "POSTGRES_PASSWORD" for "Settings"[call-arg]
-app/core/config.py:89:Missing named argument "POSTGRES_DB" for "Settings"[call-arg]
+app/core/config.py:111:Missing named argument "SECRET_KEY" for "Settings"[call-arg]
+app/core/config.py:111:Missing named argument "POSTGRES_SERVER" for "Settings"[call-arg]
+app/core/config.py:111:Missing named argument "POSTGRES_USER" for "Settings"[call-arg]
+app/core/config.py:111:Missing named argument "POSTGRES_PASSWORD" for "Settings"[call-arg]
+app/core/config.py:111:Missing named argument "POSTGRES_DB" for "Settings"[call-arg]
 app/core/security.py:7:Library stubs not installed for "jose"[import-untyped]
 app/core/security.py:8:Library stubs not installed for "passlib.context"[import-untyped]
 app/models/task.py:58:Name "Project" is not defined[name-defined]
