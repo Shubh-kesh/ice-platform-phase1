@@ -26,6 +26,14 @@ from app.ai.agent import (
 )
 from app.ai.context import ActorContext, session_scope
 from app.ai.security import (
+    TOOL_WEB_SEARCH,
+    TOOL_GET_PROJECT_TASKS,
+    TOOL_GET_DAILY_SITE_LOGS,
+    TOOL_GET_INVOICES,
+    TOOL_GET_JOB_COSTS,
+    TOOL_GET_PO_DELIVERIES,
+    TOOL_GET_BILLING_MILESTONES,
+    TOOL_GET_INVENTORY_MOVEMENTS,
     TOOL_GET_MY_NOTIFICATIONS,
     TOOL_GET_PROJECT,
     TOOL_GET_PROJECT_BUDGET,
@@ -33,6 +41,8 @@ from app.ai.security import (
     TOOL_GET_PROJECT_INVENTORY,
     TOOL_GET_PURCHASE_ORDERS,
     TOOL_LIST_PROJECTS,
+    TOOL_CREATE_TASK,
+    TOOL_CREATE_DAILY_SITE_LOG,
     ToolForbidden,
     assert_tool_allowed,
     tools_for_role,
@@ -64,6 +74,29 @@ EXPECTED_SEVEN = frozenset(
         TOOL_GET_PROJECT_INVENTORY,
         TOOL_GET_PURCHASE_ORDERS,
         TOOL_GET_MY_NOTIFICATIONS,
+    }
+)
+
+EXPECTED_CATALOG = frozenset(
+    {
+        TOOL_LIST_PROJECTS,
+        TOOL_GET_PROJECT,
+        TOOL_GET_PROJECT_HEALTH,
+        TOOL_GET_PROJECT_BUDGET,
+        TOOL_GET_PROJECT_INVENTORY,
+        TOOL_GET_PURCHASE_ORDERS,
+        TOOL_GET_MY_NOTIFICATIONS,
+        TOOL_WEB_SEARCH,
+        TOOL_GET_PROJECT_TASKS,
+        TOOL_GET_DAILY_SITE_LOGS,
+        TOOL_GET_JOB_COSTS,
+        TOOL_GET_PO_DELIVERIES,
+        TOOL_GET_BILLING_MILESTONES,
+        TOOL_GET_INVENTORY_MOVEMENTS,
+        TOOL_GET_INVOICES,
+        # W7.4 HITL-guarded mutations.
+        TOOL_CREATE_TASK,
+        TOOL_CREATE_DAILY_SITE_LOG,
     }
 )
 
@@ -177,9 +210,9 @@ def test_actor_context_is_immutable():
 # --- Tool registry + schemas ------------------------------------------------------
 
 
-def test_exactly_seven_tools():
-    assert set(TOOL_BY_NAME.keys()) == EXPECTED_SEVEN
-    assert len(ALL_TOOLS) == 7
+def test_tool_catalog():
+    assert set(TOOL_BY_NAME.keys()) == EXPECTED_CATALOG
+    assert len(ALL_TOOLS) == 17
 
 
 def test_no_generic_sql_or_query_tool():
@@ -217,19 +250,37 @@ async def test_forged_identity_argument_cannot_escalate(test_db, test_client_use
 
 
 def test_role_tool_menus():
-    assert tools_for_role(UserRole.ADMIN) == EXPECTED_SEVEN
-    assert tools_for_role(UserRole.PROCUREMENT_MANAGER) == EXPECTED_SEVEN
+    assert tools_for_role(UserRole.ADMIN) == EXPECTED_CATALOG
+    # W7.4: procurement mirrors REST write roles — no schedule/site-log writes.
+    assert tools_for_role(UserRole.PROCUREMENT_MANAGER) == EXPECTED_CATALOG - {
+        TOOL_CREATE_TASK,
+        TOOL_CREATE_DAILY_SITE_LOG,
+    }
     assert tools_for_role(UserRole.SITE_SUPERVISOR) == frozenset(
         {
             TOOL_LIST_PROJECTS,
             TOOL_GET_PROJECT,
             TOOL_GET_PROJECT_HEALTH,
             TOOL_GET_PROJECT_INVENTORY,
+            TOOL_GET_INVENTORY_MOVEMENTS,
+            TOOL_GET_PROJECT_TASKS,
+            TOOL_GET_DAILY_SITE_LOGS,
             TOOL_GET_MY_NOTIFICATIONS,
+            TOOL_WEB_SEARCH,
+            TOOL_CREATE_TASK,
+            TOOL_CREATE_DAILY_SITE_LOG,
         }
     )
     assert tools_for_role(UserRole.CLIENT) == frozenset(
-        {TOOL_LIST_PROJECTS, TOOL_GET_PROJECT, TOOL_GET_MY_NOTIFICATIONS}
+        {
+            TOOL_LIST_PROJECTS,
+            TOOL_GET_PROJECT,
+            TOOL_GET_PROJECT_TASKS,
+            TOOL_GET_DAILY_SITE_LOGS,
+            TOOL_GET_INVOICES,
+            TOOL_GET_MY_NOTIFICATIONS,
+            TOOL_WEB_SEARCH,
+        }
     )
 
 
@@ -527,7 +578,7 @@ async def test_client_agent_menu_excludes_forbidden_tools(test_db, test_client_u
     await assign_user_to_project(test_db, test_project.id, test_client_user.id)
     agent = build_agent(UserRole.CLIENT, model=FakeChatModel())  # constructs without error
     menu = {t.name for t in tools_for_role_toolset(UserRole.CLIENT)}
-    assert menu == {TOOL_LIST_PROJECTS, TOOL_GET_PROJECT, TOOL_GET_MY_NOTIFICATIONS}
+    assert menu == {TOOL_LIST_PROJECTS, TOOL_GET_PROJECT, TOOL_GET_PROJECT_TASKS, TOOL_GET_DAILY_SITE_LOGS, TOOL_GET_INVOICES, TOOL_GET_MY_NOTIFICATIONS, TOOL_WEB_SEARCH} if settings.ICE_AI_WEB_SEARCH_ENABLED else {TOOL_LIST_PROJECTS, TOOL_GET_PROJECT, TOOL_GET_PROJECT_TASKS, TOOL_GET_DAILY_SITE_LOGS, TOOL_GET_INVOICES, TOOL_GET_MY_NOTIFICATIONS}
     assert TOOL_GET_PROJECT_BUDGET not in menu
     assert agent is not None
 

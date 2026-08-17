@@ -65,3 +65,44 @@ async def get_purchase_orders(
             }
         )
     return bound_items(rows, total_count=len(rows), limit=limit)
+
+
+@tool
+@safe_tool
+async def get_purchase_order_deliveries(
+    project_id: uuid.UUID, po_id: uuid.UUID, limit: int = 20, runtime: ToolRuntime[ActorContext] = None  # type: ignore[assignment]
+) -> dict[str, Any]:
+    """List verified delivery/receipt history for a purchase order (reference,
+    verified date, line count, resulting PO status). Admin and procurement
+    only."""
+    from app.models.delivery import Delivery
+    from app.models.purchase_order import PurchaseOrder
+
+    actor = actor_from(runtime)
+    require_role(actor, UserRole.ADMIN, UserRole.PROCUREMENT_MANAGER)
+    db = current_db()
+    project = await get_project_any(db, project_id)
+    # IDOR: the PO must belong to the project.
+    po_result = await db.execute(
+        select(PurchaseOrder).where(
+            PurchaseOrder.id == po_id, PurchaseOrder.project_id == project.id
+        )
+    )
+    if po_result.scalar_one_or_none() is None:
+        return {"error": "not_found", "detail": "Purchase order not found"}
+    result = await db.execute(
+        select(Delivery)
+        .where(Delivery.purchase_order_id == po_id, Delivery.project_id == project.id)
+        .order_by(Delivery.verified_at.desc())
+    )
+    deliveries = list(result.scalars().all())
+    rows = [
+        {
+            "delivery_id": str(d.id),
+            "reference": d.reference,
+            "note": d.note,
+            "verified_at": d.verified_at.isoformat(),
+        }
+        for d in deliveries
+    ]
+    return bound_items(rows, total_count=len(rows), limit=limit)

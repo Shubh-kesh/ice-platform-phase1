@@ -149,7 +149,9 @@ async def test_capabilities_role_scoped(client, test_admin_user, test_client_use
     admin_header = await auth_header(client, "admin@test.com")
     admin = (await client.get("/api/v1/assistant/capabilities", headers={"Authorization": admin_header})).json()
     assert admin["read_only"] is True
-    assert admin["memory_enabled"] is False
+    # W7.1: conversation memory is ON (process-local InMemorySaver) by default.
+    assert admin["memory_enabled"] is True
+    assert admin["memory_mode"] in ("saver", "summarize", "context_edit")
     assert admin["web_search_enabled"] is False
     assert admin["mutations_enabled"] is False
     admin_labels = {t["label"] for t in admin["tools"]}

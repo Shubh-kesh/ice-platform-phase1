@@ -60,3 +60,47 @@ async def get_project_inventory(
         for item in items
     ]
     return bound_items(rows, total_count=len(rows), limit=limit)
+
+
+@tool
+@safe_tool
+async def get_project_inventory_movements(
+    project_id: uuid.UUID, item_id: uuid.UUID, limit: int = 20, runtime: ToolRuntime[ActorContext] = None  # type: ignore[assignment]
+) -> dict[str, Any]:
+    """List the immutable stock-movement ledger for one inventory item (type,
+    quantity, note, date). Use for stock history questions."""
+    from sqlalchemy import select
+
+    from app.models.inventory import StockMovement
+
+    actor = actor_from(runtime)
+    db = current_db()
+    user = await load_user(db, actor)
+    assert_not_client_role(actor)
+    project = await get_project_visible(db, user, project_id)
+    # IDOR: the item must belong to the project.
+    item_result = await db.execute(
+        select(InventoryItem).where(
+            InventoryItem.id == item_id, InventoryItem.project_id == project.id
+        )
+    )
+    item = item_result.scalar_one_or_none()
+    if item is None:
+        return {"error": "not_found", "detail": "Inventory item not found"}
+    result = await db.execute(
+        select(StockMovement)
+        .where(StockMovement.item_id == item_id)
+        .order_by(StockMovement.created_at.desc())
+    )
+    movements = list(result.scalars().all())
+    rows = [
+        {
+            "movement_id": str(m.id),
+            "movement_type": m.movement_type.value,
+            "quantity": float(m.quantity),
+            "note": m.note,
+            "created_at": m.created_at.isoformat(),
+        }
+        for m in movements
+    ]
+    return bound_items(rows, total_count=len(rows), limit=limit)

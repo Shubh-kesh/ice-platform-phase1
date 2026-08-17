@@ -27,6 +27,13 @@ class FakeChatModel(BaseChatModel):
 
     responses: list[AIMessage] = []
     usage: dict[str, int] = {}
+    # Records every input message list the model was called with (the full
+    # messages, not just types) — used by memory tests to prove history
+    # propagation across turns/threads.
+    calls: list[list[Any]] = []
+
+    def _record(self, messages: list[Any]) -> None:
+        self.calls.append(list(messages))
 
     def _generate(
         self,
@@ -35,6 +42,7 @@ class FakeChatModel(BaseChatModel):
         run_manager: Any = None,
         **kwargs: Any,
     ) -> ChatResult:
+        self._record(messages)
         message = self.responses.pop(0) if self.responses else AIMessage(content="Done.")
         return ChatResult(generations=[ChatGeneration(message=message)])
 
@@ -45,6 +53,7 @@ class FakeChatModel(BaseChatModel):
         run_manager: Any = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
+        self._record(messages)
         message = self.responses.pop(0) if self.responses else AIMessage(content="Done.")
         if getattr(message, "tool_calls", None):
             # Tool-call turns deliver the whole request in one chunk (content

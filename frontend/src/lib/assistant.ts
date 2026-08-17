@@ -14,6 +14,7 @@ import type {
   AssistantChatRequest,
   AssistantEvent,
   AssistantEventName,
+  AssistantResumeRequest,
 } from "../types/assistant";
 
 const KNOWN_EVENTS: ReadonlySet<string> = new Set<AssistantEventName>([
@@ -22,6 +23,9 @@ const KNOWN_EVENTS: ReadonlySet<string> = new Set<AssistantEventName>([
   "tool_started",
   "tool_finished",
   "assistant_complete",
+  "approval_required",
+  "assistant_resumed",
+  "action_completed",
   "error",
 ]);
 
@@ -67,16 +71,18 @@ function parseSseFrame(raw: string): AssistantEvent | null {
  */
 export async function* streamChat(
   message: string,
+  threadId?: string,
   signal?: AbortSignal
 ): AsyncGenerator<AssistantEvent> {
   const token = getAccessToken();
+  const body: AssistantChatRequest = threadId ? { message, thread_id: threadId } : { message };
   const response = await fetch(`${API_URL}/assistant/chat`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ message } satisfies AssistantChatRequest),
+    body: JSON.stringify(body),
     signal,
   });
 
@@ -126,6 +132,74 @@ export async function* streamChat(
   } finally {
     if (signal?.aborted) {
       // Best-effort cancellation of the underlying stream on abort.
+      void reader.cancel().catch(() => undefined);
+    }
+  }
+}
+
+/**
+ * Resume an interrupted mutating-tool proposal with the human's decision,
+ * streaming the continuation (tool execution + final answer) as SSE events.
+ */
+export async function* streamResume(
+  body: AssistantResumeRequest,
+  signal?: AbortSignal
+): AsyncGenerator<AssistantEvent> {
+  const token = getAccessToken();
+  const response = await fetch(`${API_URL}/assistant/resume`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (!response.ok || !response.body) {
+    if (response.status === 401) {
+      throw new AssistantRequestError(401, "Your session has expired. Please sign in again.");
+    }
+    if (response.status === 422) {
+      throw new AssistantRequestError(422, "That decision is not valid for this action.");
+    }
+    if (response.status === 429) {
+      throw new AssistantRequestError(429, "Too many requests. Please wait a moment and try again.");
+    }
+    throw new AssistantRequestError(response.status, "The assistant could not be reached.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      let boundary = buffer.indexOf("\n\n");
+      while (boundary !== -1) {
+        const frame = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const event = parseSseFrame(frame);
+        if (event) {
+          yield event;
+        }
+        boundary = buffer.indexOf("\n\n");
+      }
+    }
+    const trailing = buffer.trim();
+    if (trailing) {
+      const event = parseSseFrame(trailing);
+      if (event) {
+        yield event;
+      }
+    }
+  } finally {
+    if (signal?.aborted) {
       void reader.cancel().catch(() => undefined);
     }
   }

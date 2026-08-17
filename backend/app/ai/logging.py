@@ -87,8 +87,14 @@ def log_event(request_id: str, event: str, **fields: Any) -> None:
 
 
 def sanitize_query(query: str) -> str:
-    """A sanitized, truncated copy of the user query for DEBUG logs."""
-    return _truncate(str(query), _MAX_QUERY_CHARS)
+    """A sanitized, truncated copy of the user query for DEBUG logs.
+
+    PII (email/phone/Aadhaar/PAN) is masked so ICE_AI_DEBUG can never defeat
+    PIIMiddleware by writing raw PII before the middleware masks it.
+    """
+    from app.ai import pii as ai_pii
+
+    return _truncate(ai_pii.mask_pii_text(str(query)), _MAX_QUERY_CHARS)
 
 
 def sanitize_tool_args(args: Any) -> dict[str, Any]:

@@ -106,6 +106,69 @@ class Settings(BaseSettings):
     ICE_AI_TEMPERATURE: float = 0.0
     ICE_AI_MAX_TOOL_RESULT_CHARS: int = 4000
     ICE_AI_DEBUG: bool = False
+    # W7.1 conversation memory.
+    # ICE_AI_MEMORY_MODE: none | saver | summarize | context_edit
+    #   none         -> stateless (AI-1 behavior), no checkpointer
+    #   saver        -> InMemorySaver + thread_id multi-turn memory
+    #   summarize    -> saver + SummarizationMiddleware (experiment)
+    #   context_edit -> saver + ContextEditingMiddleware/ClearToolUsesEdit (experiment)
+    # InMemorySaver is PROCESS-LOCAL: memory disappears on restart and is not
+    # shared across backend workers (documented W7.1 limitation — no Redis/DB).
+    ICE_AI_MEMORY_MODE: str = "saver"
+    ICE_AI_SUMMARIZE_TRIGGER_KIND: str = "messages"
+    ICE_AI_SUMMARIZE_TRIGGER_VALUE: int = 40
+    ICE_AI_SUMMARIZE_KEEP: int = 20
+    ICE_AI_CONTEXT_EDIT_TRIGGER: int = 5000  # approx tokens before clearing old tool uses
+    ICE_AI_CONTEXT_EDIT_KEEP: int = 3  # recent tool uses kept
+    # W7.2 external web search (Tavily API via a direct async httpx wrapper —
+    # no SDK dependency). Default OFF; the key is a provider secret.
+    ICE_AI_WEB_SEARCH_ENABLED: bool = False
+    ICE_AI_TAVILY_API_KEY: str = ""
+    ICE_AI_WEB_SEARCH_MAX_RESULTS: int = 5
+    ICE_AI_WEB_SEARCH_TIMEOUT_SECONDS: float = 10.0
+    ICE_AI_WEB_SEARCH_MAX_RESULT_CHARS: int = 2000
+    # ToolRetryMiddleware (external only) — retry transient web failures only.
+    ICE_AI_WEB_SEARCH_RETRIES: int = 2  # max retries after the initial attempt
+    ICE_AI_WEB_SEARCH_RETRY_INITIAL_DELAY: float = 0.2
+    ICE_AI_WEB_SEARCH_RETRY_BACKOFF: float = 2.0
+    # W7.3 middleware/resilience (product-safe defaults; selectors off).
+    # Model call limit — bounds runaway agent loops (normal runs are small).
+    ICE_AI_MODEL_RUN_LIMIT: int = 8
+    ICE_AI_MODEL_THREAD_LIMIT: int = 0  # 0 = unset (no thread-level cap)
+    ICE_AI_MODEL_LIMIT_EXIT: str = "end"  # end | error
+    # Tool call limit — global + a tight per-tool cap on web_search.
+    ICE_AI_TOOL_RUN_LIMIT: int = 15
+    ICE_AI_TOOL_THREAD_LIMIT: int = 0
+    ICE_AI_WEB_TOOL_RUN_LIMIT: int = 3
+    # Model retry — transient same-provider failures only.
+    ICE_AI_MODEL_RETRY_MAX: int = 1
+    ICE_AI_MODEL_RETRY_INITIAL_DELAY: float = 0.2
+    ICE_AI_MODEL_RETRY_BACKOFF: float = 2.0
+    # Model fallback — server-side ordered failover (optional).
+    ICE_AI_FALLBACK_PROVIDER: str = ""
+    ICE_AI_FALLBACK_MODEL: str = ""
+    # PII — email/phone redaction is a PRODUCT default (input); custom Aadhaar/
+    # PAN detectors are a LEARNING exercise.
+    ICE_AI_PII_ENABLED: bool = True
+    ICE_AI_PII_STRATEGY: str = "redact"  # redact | mask | block | hash
+    ICE_AI_PII_CUSTOM_ENABLED: bool = False
+    # TodoList planning (optional; adds a read-only write_todos planning tool).
+    ICE_AI_TODO_ENABLED: bool = False
+    # LLM tool selector — measurement-gated; OFF by default.
+    ICE_AI_TOOL_SELECTOR_ENABLED: bool = False
+    ICE_AI_TOOL_SELECTOR_MAX_TOOLS: int = 6
+    ICE_AI_TOOL_SELECTOR_ALWAYS_INCLUDE: str = "list_projects,get_project"
+    ICE_AI_TOOL_SELECTOR_PROVIDER: str = ""
+    ICE_AI_TOOL_SELECTOR_MODEL: str = ""
+
+    # W7.4 — controlled mutations with HumanInTheLoop. OFF by default (the AI
+    # stays read-only); enabling turns on the two low-risk mutating tools
+    # (create_task, create_daily_site_log), each guarded by an HITL interrupt
+    # that requires an explicit human decision via POST /assistant/resume.
+    ICE_AI_MUTATIONS_ENABLED: bool = False
+    # The mutating tools force the checkpointer-backed "saver" thread mode
+    # when this is true (HITL resume needs a user-namespaced thread).
+    ICE_AI_HITL_MEMORY_MODE: str = "saver"
 
 
 settings = Settings()
