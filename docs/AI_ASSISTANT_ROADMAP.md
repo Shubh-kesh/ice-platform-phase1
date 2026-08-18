@@ -1,5 +1,14 @@
 # ICE AI Assistant — Architecture & Course Mapping (AI-0, Rev 2)
 
+> **Aug 18 note — HISTORICAL PLANNING DOCUMENT (pre-implementation).** The AI
+> workstream is now implemented through **Weekend 07** and committed at
+> `ce88b1f`. This file is the original AI-0 plan (course mapping + AI-1…AI-6
+> sequence) kept as a historical record. For current state, see
+> `docs/AI_WEEKEND7_IMPLEMENTATION_REVIEW.md` (canonical record),
+> `docs/AI_W7_IMPLEMENTATION_SUMMARY.md` (plain-language), and
+> `docs/AI_CONTEXT.md` (bootstrap). Milestone numbers below (AI-1…AI-6) are
+> planning labels, not current status.
+
 **Status:** PLANNING ONLY (AI-0, revision 2). No AI application code, no
 migrations, no dependency changes, no changes to existing backend/frontend
 behavior were created by this document.

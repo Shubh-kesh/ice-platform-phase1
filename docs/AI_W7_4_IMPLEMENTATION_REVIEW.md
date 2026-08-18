@@ -101,9 +101,12 @@ inventory adjustments, user/role changes.
 
 LangGraph resume semantics: resuming a thread that already completed its
 interrupt does not re-execute the tool (verified: executed calls stayed at one).
-The site-log duplicate-day guard is a second, domain-level backstop. No broad
-idempotency system was invented; residual risk = process-local interruption loss
-on restart (documented).
+This is now **regression-pinned** in `tests/test_hitl.py`
+(`test_double_resume_never_duplicates_mutation`): a replayed approve on the same
+thread returns `no_pending_approval`, the task count stays at exactly 1, and the
+`tasks` audit row appears exactly once. The site-log duplicate-day guard is a
+second, domain-level backstop. No broad idempotency system was invented;
+residual risk = process-local interruption loss on restart (documented).
 
 ## 9. Emulator
 
@@ -153,8 +156,9 @@ a live product integration would call the real read-only tools.
 
 ## 16. Tests (new)
 
-- `tests/test_hitl.py` (12): interrupt + DB unchanged; approve/edit/reject/
-  respond; cross-user resume blocked; same-thread-id isolation; client cannot
+- `tests/test_hitl.py` (13): interrupt + DB unchanged; approve/edit/reject/
+  respond; double-resume replay (no_pending_approval, no duplicate mutation);
+  cross-user resume blocked; same-thread-id isolation; client cannot
   escalate; invalid decision; safe SSE; fresh saver loses interrupt; site-log
   append + duplicate-day guard.
 - `tests/test_mutating_tools.py` (15): direct RBAC (admin/supervisor allowed;
@@ -162,7 +166,7 @@ a live product integration would call the real read-only tools.
   read-only, validation rollback, audit rows, result shape, toolset exclusion.
 - `tests/test_w7_4_concepts.py` (4): emulator (0 executions), store isolation,
   return_direct call count, dynamic gating.
-- AI suite total: **127 passed** (96 prior + 31 new).
+- AI suite total: **128 passed** (96 prior + 32 new).
 
 ## 17. Labs (new, all self-contained / ruff-clean / run OK)
 

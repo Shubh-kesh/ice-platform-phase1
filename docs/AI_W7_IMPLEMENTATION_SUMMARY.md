@@ -492,3 +492,53 @@ mutations; safe SSE approval cards; structured report workflow.
 RAG/embeddings, MCP, multi-agent/sub-agents, autonomous agents, advanced semantic
 long-term memory, durable approvals/threads, and a live cost benchmark for the
 tool selector — all explicitly deferred.
+
+---
+
+# Weekend-07 Close-Out
+
+**All concepts taught through Weekend 07 are now implemented.** W7.1
+memory/context, W7.2 web/retry, W7.3 middleware/resilience, and W7.4
+HITL/actions landed, were measured, and were security-reviewed. The final
+program record is `docs/AI_WEEKEND7_IMPLEMENTATION_REVIEW.md`.
+
+## Double-resume safety, simply
+
+A pending approval is **single-use**. LangGraph records the interrupt in the
+thread's checkpoint; the first `approve` consumes it and the tool runs exactly
+once. Replaying the same approve on the same thread finds no pending interrupt
+and answers `no_pending_approval` — a safe no-op. The mutation count and the
+audit trail stay at exactly one each. This is now pinned by a regression test
+(`test_hitl.py::test_double_resume_never_duplicates_mutation`).
+
+## Why HITL approval must be single-use
+
+Approval is the human's explicit "yes, run this proposal". If the same approval
+could run the tool twice, a network retry or a double-clicked button would
+create two tasks or two site logs — silent duplicate mutations on an append-only
+audit trail. One approval = one execution; anything after that is either a fresh
+proposal or a rejection.
+
+## Final test baseline (verified Aug 18, 2026)
+
+- Backend: **462 passing** (real Postgres), of which **128 are AI tests**.
+- Frontend: `npm run build` + `npm run lint` (oxlint) PASS.
+- Gates: ruff 2=2 PASS, mypy 10=10 PASS, oxlint 1=1 PASS.
+- All 20 `ai_labs/` demos run clean; secret scan clean.
+
+## Current known limitations
+
+- Thread memory and pending approvals are process-local (InMemorySaver) — a
+  restart loses them.
+- Mutations default OFF (`ICE_AI_MUTATIONS_ENABLED=false`); the product stays
+  read-only until explicitly enabled.
+- No live provider smoke (OpenRouter daily quota; no Tavily key) — deterministic
+  tests/labs cover behavior.
+
+## Next AI work waits for Weekend 08+
+
+The course currently ends at Weekend 07 / Class 12. There is **no Weekend 08+
+material yet**, so no new AI milestone is invented: the workstream pauses here.
+When the user/course provides Weekend 08+ content, implementation resumes from
+`docs/AI_WEEKEND7_IMPLEMENTATION_REVIEW.md` §20 (deferred). ICE feature
+development (Phase 5+) can resume independently on request.

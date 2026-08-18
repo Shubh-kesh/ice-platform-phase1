@@ -108,8 +108,8 @@ external failures, never for DB/domain errors.
 Propose → HITL interrupt → human decision → resume on the user-owned thread →
 tool re-checks ICE RBAC/validation → record_audit + transaction → result.
 Approval never bypasses RBAC (client-approve test proves denial). Double-resume
-executes nothing twice (langgraph semantics) + domain-level duplicate guard for
-site logs.
+executes nothing twice (langgraph semantics, now regression-pinned in
+`test_hitl.py`) + domain-level duplicate guard for site logs.
 
 ## 14. Learning labs (ai_labs/)
 
@@ -122,9 +122,11 @@ never imported by `app/`, each with a README.
 
 ## 15. Tests
 
-Backend suite grew from 390 → **465** tests (430 baseline + 35 new W7.4; the AI
-suite is 127). All deterministic fake models, real Postgres. Gates: ruff 2=2,
-mypy 10=10 (config re-baselined), oxlint 1=1, frontend build PASS, git diff
+Backend suite grew from 390 → **462** tests (430 W7.3 baseline + 31 new W7.4 +
+1 close-out double-resume regression; the AI suite is 128). All deterministic
+fake models, real Postgres. Gates: ruff 2=2,
+mypy 10=10 (no new findings; config re-baselined), oxlint 1=1, frontend
+build PASS, git diff
 --check clean, secret scan clean.
 
 ## 16. Frontend
@@ -153,8 +155,8 @@ return_direct, dynamic gating, report workflow lab, middleware-order lab.
 InMemorySaver/InMemoryStore are process-local (restart loses memory and pending
 approvals; not multi-worker safe). Mutations default OFF. Live provider smoke
 skipped (OpenRouter daily quota, no Tavily key). Tool-selector savings are a
-token proxy pending live measurement. Push of the earlier AI-1 commit is still
-pending.
+token proxy pending live measurement. (AI-1 and the full Weekend-07 set are now
+committed at `ce88b1f`; double-resume safety is regression-pinned.)
 
 ## 20. Deferred (Weekend 08+)
 

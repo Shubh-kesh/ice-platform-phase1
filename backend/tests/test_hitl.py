@@ -172,6 +172,76 @@ async def test_approve_executes_one_mutation(client, test_db, test_admin_user, t
     assert any(r.action == "create" and r.table_name == "tasks" for r in rows)
 
 
+async def test_double_resume_never_duplicates_mutation(
+    client, test_db, test_admin_user, test_project, monkeypatch
+):
+    """REGRESSION: replaying the SAME approve on the SAME thread must be a
+    no-op, never a second mutation.
+
+    HITL approval is single-use: the first approve consumes the interrupt via
+    LangGraph's Command(resume=...) checkpoint semantics, so a replayed resume
+    finds no pending interrupt and returns `no_pending_approval`. This pins that
+    the same thread can never execute the same proposal twice (one task, one
+    audit row, zero duplicates).
+    """
+    await _enable_hitl(monkeypatch)
+    shared = FakeChatModel(responses=[create_task_call(test_project.id), AIMessage(content="Task created.")])
+    monkeypatch.setattr(assistant_mod, "build_model", lambda: shared)
+    header = await auth_header(client, "admin@test.com")
+    thread = str(uuid.uuid4())
+
+    # 1. produce a pending HITL interrupt; DB untouched before approval.
+    await _chat(client, header, "Create a task", thread)
+    assert await _count(test_db, Task) == 0
+
+    # 2. FIRST approve executes exactly ONE mutation.
+    resp = await _resume(client, header, thread, "approve")
+    assert resp.status_code == 200
+    frames = parse_sse(resp.text)
+    events = [e for e, _ in frames]
+    assert "assistant_complete" in events
+    assert "error" not in events
+    (completed,) = [d for e, d in frames if e == "action_completed"]
+    assert completed["ok"] is True
+    assert await _count(test_db, Task) == 1
+
+    from app.models.audit import AuditLog
+
+    audit_rows = (
+        await test_db.execute(
+            select(AuditLog).where(AuditLog.action == "create", AuditLog.table_name == "tasks")
+        )
+    ).scalars().all()
+    assert len(audit_rows) == 1
+
+    # 3. REPLAY the same approve on the same thread: safe no-op.
+    resp = await _resume(client, header, thread, "approve")
+    assert resp.status_code == 200
+    frames = parse_sse(resp.text)
+    events = [e for e, _ in frames]
+    (err,) = [d for e, d in frames if e == "error"]
+    assert err["code"] == "no_pending_approval"
+    assert "action_completed" not in events
+
+    # 4. no second mutation, no duplicate audit row.
+    assert await _count(test_db, Task) == 1
+    audit_rows = (
+        await test_db.execute(
+            select(AuditLog).where(AuditLog.action == "create", AuditLog.table_name == "tasks")
+        )
+    ).scalars().all()
+    assert len(audit_rows) == 1
+
+    # 5. a fresh proposal on a NEW thread still works normally.
+    shared2 = FakeChatModel(responses=[create_task_call(test_project.id, name="Second task"), AIMessage(content="Done.")])
+    monkeypatch.setattr(assistant_mod, "build_model", lambda: shared2)
+    thread2 = str(uuid.uuid4())
+    await _chat(client, header, "Create another task", thread2)
+    resp = await _resume(client, header, thread2, "approve")
+    assert "error" not in [e for e, _ in parse_sse(resp.text)]
+    assert await _count(test_db, Task) == 2
+
+
 async def test_edit_executes_edited_mutation(client, test_db, test_admin_user, test_project, monkeypatch):
     await _enable_hitl(monkeypatch)
     shared = FakeChatModel(responses=[create_task_call(test_project.id, name="Original name"), AIMessage(content="Done.")])

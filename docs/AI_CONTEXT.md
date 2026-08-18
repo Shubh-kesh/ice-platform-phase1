@@ -18,126 +18,98 @@ provisioned but unused. Source of product vision:
 
 ## 2. Current Repository State
 
-- **Branch:** `claude-development`; **HEAD:** `9bfe711` (feat: implement M15
-  purchase order receiving), **ahead of `origin/claude-development` by 1**
-  (M15 committed, **not pushed**).
-- **AI-1 — ICE Copilot: COMPLETE and verified SAFE TO COMMIT (uncommitted).**
-  Working tree carries the entire AI-1 change set (backend `app/ai/` +
-  `api/v1/assistant.py`, AI tests, frontend `/assistant`, config/requirements,
-  `backend/ai_labs/`, and the four canonical AI docs). See
-  `docs/AI1_IMPLEMENTATION_REVIEW.md` and `docs/SESSION_HANDOFF.md`.
+- **Branch:** `claude-development`; **HEAD:** `ce88b1f` (new developer
+  directory code push); **in sync with `origin/claude-development`**; working
+  tree clean.
+- **AI learning workstream (Weekend 01–07): COMPLETE and committed.** W7.1
+  memory/context, W7.2 web/retry, W7.3 middleware/resilience, and W7.4
+  HITL/actions are all implemented and committed at `ce88b1f`. Canonical
+  records: `docs/AI_WEEKEND7_IMPLEMENTATION_REVIEW.md` (final program review),
+  `docs/AI_W7_4_IMPLEMENTATION_REVIEW.md` (W7.4 checkpoint),
+  `docs/AI_W7_IMPLEMENTATION_SUMMARY.md` (plain-language).
+- **No AI milestone is currently in flight.** Weekend 08+ course material does
+  not exist yet in `mayank953/Live-Class-2026` (course ends at Weekend 07 /
+  Class 12). Next AI work waits for user/course Weekend 08+ — do not invent a
+  new AI milestone.
 - **Alembic repository head:** `l5d6e7f8a9b0` (M15 `receiving/deliveries`).
   The migration chain (upgrade → downgrade → replay) is chain-tested through
-  this revision in `backend/tests/test_migrations.py`
-  (`HEAD_REVISION = "l5d6e7f8a9b0"`).
-- **Live dev DB: verified at `l5d6e7f8a9b0`** (Aug 15, 2026) — Docker up
-  (`ice-platform-*` healthy); Vite dev server on `:5173`.
-- **Backend tests:** **390 passing** (verified Aug 15, 2026 against real
-  Postgres), including **56 AI tests** (tools/RBAC, agent loop, SSE API,
-  provider factory) plus the full M1–M15 suite and the Alembic
-  upgrade/downgrade/replay chain through `l5d6e7f8a9b0`.
+  this revision in `backend/tests/test_migrations.py`.
+- **Backend tests:** **462 passing** (verified Aug 18, 2026 against real
+  Postgres), including **128 AI tests** (tools/RBAC, agent loop, SSE API,
+  provider factory, memory, web search, middleware, HITL lifecycle incl.
+  double-resume replay, mutating-tool RBAC, W7.4 concepts) plus the full
+  M1–M15 suite and the Alembic upgrade/downgrade/replay chain.
 - **Frontend:** `npm run build` passes; oxlint delta gate PASS (1 pre-existing
   `auth-context.tsx` Fast-Refresh warning).
-- **Quality gates:** ruff 2 / mypy 10 / oxlint 1 baselines met (delta gates
-  PASS); `git diff --check` clean.
-- **Working tree (uncommitted):** the AI-1 change set only. M15 is committed at
-  HEAD (`9bfe711`). No migration beyond `l5d6e7f8a9b0`; no application behavior
-  changed outside the AI module + its router/config/requirements.
+- **Quality gates:** ruff current=2 vs baseline=2 PASS, mypy current=10 vs
+  baseline=10 PASS (no new findings; 2 of the baseline entries are jose/passlib
+  stub warnings that resolve if `types-python-jose`/`types-passlib` are
+  installed — CI does not install them), oxlint current=1 vs baseline=1;
+  `git diff --check` clean; secret scan clean.
+- **Environment note:** the host conda base env is drifted (fastapi 0.116 /
+  starlette 1.6 break imports). Run tests in the pinned
+  `requirements-dev.txt` venv or the Docker image (fastapi 0.115.0, starlette
+  0.38.6), NOT the host conda env.
 - **Phase 4 production infrastructure (P4.2–P4.6):** intentionally **deferred**
-  (owner decisions pending; see §4). P4.1 (CI/CD quality gates) is complete,
-  committed, and CI-verified.
+  (owner decisions pending; see §4). P4.1 (CI/CD quality gates) is complete.
 
 ## 3. Completed Milestones
 
-Chronological (all committed unless noted):
+Chronological (all committed):
 
 - **Phase 1** — foundation: auth, RBAC (4 roles), projects CRUD, Command
   Center, audit trail, seed data.
 - **Phase 2** — tasks (Gantt), daily site logs, inventory ledger, finance
   schema scaffold.
-- **M1** — inventory integrity: row-locked movements + ledger reconciliation.
-- **M2** — project-assignment management (unique constraint, admin API/UI).
-- **M4** — job costing with cost codes; `budget_spent` derived from ledger.
-- **M10** — project lifecycle & admin: DRAFT→ACTIVE→COMPLETED→ARCHIVED,
-  auto project codes, archive visibility/read-only, seed gating.
-- **M3** — computed health (timeline/budget/safety) + audited admin overrides.
-- **M5** — milestone invoicing (schedule-of-values → invoices; client
-  restricted shape).
-- **M6** — client view-only portal (server-enforced contract). Close-out
-  (`7795890`, 17 tests) — detail isolation, archived-404, task/site-log read
-  shapes, invoice allow/deny lists, IDOR, mutation matrix,
-  Google-authenticated-client parity, and a role regression.
-- **M7** — task date-order + dependency/cycle validation.
-- **M8** — idempotency keys (transactional claim ledger).
-- **M9** — token security: opaque rotated refresh sessions, revocation,
-  deactivated cutoff, auth-event audit.
-- **M11** — Google Sign-In (Authorization Code + PKCE, server-side ID-token
-  verification, admin onboarding; real smoke verified).
-- **M12** — dynamic Gantt: push-only Finish-to-Start scheduling, automatic
-  cascade, `task_schedule_shift` audit.
-- **M13** — in-app notifications & alerts (schedule/invoice/low-stock/
-  assignment events; user-scoped feed API; AppShell bell).
+- **M1–M15** — inventory integrity, assignments, job costing, computed health,
+  invoicing, client portal, task validation, idempotency, token security,
+  lifecycle, Google Sign-In, dynamic Gantt, notifications, vendors/POs, PO
+  receiving. (See `docs/CURRENT_STATE.md` §2–§4 for details.)
 - **P4.1** — CI/CD & quality gates (GitHub Actions; baseline-delta gates).
-- **M14** — Vendors & Purchase Orders (`e8735d7`, pushed): global vendor
-  master data (unique name → 409, soft deactivation, admin+procurement) and
-  project-scoped POs with line items, server-derived totals, `PO-{code}-{seq}`
-  numbering, audited DRAFT→PENDING_APPROVAL→APPROVED lifecycle (admin-only
-  approve/reject), M8 idempotency on PO/line create, M13 PO notifications.
-  **No receiving/verification, no job-cost/stock impact yet (M15).**
-- **M15 — PO Delivery Verification / Receiving (DONE, committed at HEAD
-  `9bfe711`, not pushed):** migration `l5d6e7f8a9b0`, `deliveries`/
-  `delivery_lines`, `po_lines.received_quantity`/`inventory_item_id`,
-  `stock_movements.po_line_id`, `job_costs.po_line_id`, receiving routes +
-  `services/receiving.py`, `po_receive` audit + `po_received` notifications,
-  cancel guard, `test_receiving.py`, frontend receive UI. A verified receipt is
-  the ONLY path that releases PO quantity into inventory/costs. See
-  `docs/M15_IMPLEMENTATION_PLAN.md`.
-- **AI-1 — ICE Copilot (DONE, verified SAFE TO COMMIT, uncommitted):** the AI
-  learning workstream's first milestone — see §3b.
+- **AI-1 — ICE Copilot** (commit `f7da04d`): read-only Copilot foundation.
+- **Weekend 01–07 (W7.1–W7.4, commit `ce88b1f`):** the AI learning workstream
+  through the whole taught course — see §3b.
 
-## 3b. AI Workstream — AI-1 (ICE Copilot)
+## 3b. AI Learning Workstream — Weekend 01–07 (COMPLETE)
 
 A separate, concurrently-running AI-learning workstream (M-series development
-is paused). AI-1 delivered an authenticated, read-only, role-aware Copilot
-integrated into the SPA. Canonical AI docs: `docs/AI_ASSISTANT_ROADMAP.md`
-(architecture/course mapping), `docs/AI1_IMPLEMENTATION_PLAN.md` (plan),
-`docs/AI1_IMPLEMENTATION_REVIEW.md` (technical record),
-`docs/AI1_IMPLEMENTATION_SUMMARY.md` (plain-language). Highlights:
+paused). Highlights:
 
-- **Backend `app/ai/`**: `ActorContext` (frozen `user_id`+`role`) injected via
-  `ToolRuntime.context` (never model args); seven read-only tools
-  (`list_projects`, `get_project`, `get_project_health`, `get_project_budget`,
-  `get_project_inventory`, `get_purchase_orders`, `get_my_notifications`) with
-  hard per-tool RBAC (REST-equivalent) + role-filtered catalog as
-  defense-in-depth; M6 client isolation preserved; bounded, ORM-free results.
-- **Multi-provider model factory** (`build_model`): openai / anthropic / groq /
-  openrouter (ChatOpenAI + base_url). Provider/model/base_url/keys are
-  server-controlled; `ICE_AI_{PROVIDER}_API_KEY` → `ICE_AI_API_KEY` precedence.
-- **Streaming SSE API**: `POST /api/v1/assistant/chat` (auth + 10/min/IP rate
-  limit, `assistant_start|token|tool_started|tool_finished|assistant_complete|
-  error` events, usage/latency metrics); `GET /api/v1/assistant/capabilities`.
-- **Frontend**: React `/assistant` page (`Assistant.tsx`, `AssistantChat.tsx`,
-  `lib/assistant.ts` fetch+ReadableStream SSE parser, `types/assistant.ts`).
-- **Runtime-context API**: the PUBLIC LangChain v1 mechanism —
-  `create_agent(..., context_schema=ActorContext)` + invocation `context=actor`
-  + tools typed `runtime: ToolRuntime[ActorContext]`. The internal
-  `CONFIG_KEY_RUNTIME`/manual-`Runtime` path is removed; no serializer warning.
-- **Safe execution logging**: structured `event=... request_id=...` lines on
-  the `ice.ai` logger (`app/ai/logging.py`) — NORMAL (run/model/tool/stream/
-  run.completed metrics) vs DEBUG (`ICE_AI_DEBUG=true`, adds sanitized query,
-  tool args, result summaries, message-type trace). Execution tracing only —
-  no chain-of-thought, no secrets, no raw payloads.
+- **W7.1 memory/context:** user-namespaced thread memory (`{user_id}::{thread_id}`)
+  on the process-local InMemorySaver; summarization + context-editing
+  middleware; thread listing. Cross-user thread access is structurally
+  impossible and tested.
+- **W7.2 web/retry:** Tavily-compatible `web_search` via a direct async httpx
+  wrapper (no SDK); `ToolRetryMiddleware` scoped to transient external
+  failures only (deterministic DB/domain errors never retried — test-pinned).
+- **W7.3 middleware/resilience:** explicit `build_middleware` order — PII
+  (input) → memory → ModelCallLimit → ModelRetry → ModelFallback →
+  ToolSelector → ToolCallLimit (global + web) → ToolRetry (web). Catalog
+  expanded to 15 read-only tools with per-tool RBAC.
+- **W7.4 HITL/actions:** HumanInTheLoopMiddleware interrupts only the two
+  low-risk mutating tools (`create_task`, `create_daily_site_log`); decisions
+  approve/edit/reject/respond via `POST /assistant/resume` →
+  `Command(resume=...)` on the same user-owned thread. Double-resume (replaying
+  the same approval) is a safe `no_pending_approval` no-op — pinned by a
+  regression test. Mutations default OFF (`ICE_AI_MUTATIONS_ENABLED=false`).
+- **Final tool catalog (17):** 15 read-only + `web_search` + 2 mutating
+  (HITL-guarded, default OFF). Every tool self-authorizes from
+  `ToolRuntime.context`.
+- **Backend:** `app/ai/` (context, security, prompts, agent, logging, memory,
+  middleware, pii, models, web_search, tools incl. mutating),
+  `api/v1/assistant.py` (chat SSE + capabilities + resume).
+- **Frontend:** React `/assistant` page with memory + thread list, web-search
+  flag, and an approval card (Approve/Edit/Reject with editable fields).
 - **Pinned AI deps:** langchain 1.3.15 · core 1.5.5 · openai-int 1.5.1 ·
   anthropic-int 1.5.6 · groq-int 1.1.3 · langgraph 1.2.11 family (pinned) ·
-  openai 2.54.0.
-- **Verified:** backend 390 (56 AI), frontend build + oxlint, ruff/mypy/oxlint
-  deltas PASS, real-provider smoke (openrouter free model), real Docker-DB
-  smoke, client prompt-injection smoke (no budget leak), no mutation, no
-  migration.
-- **AI-1 limitations (deliberate):** stateless (no memory), read-only (no
-  mutators), no web search, no middleware, no RAG/vector/MCP/multi-agent.
-- **Next AI milestone: AI-2 — Conversation Intelligence** (memory/checkpointing,
-  conversation context, summarization). Not started.
+  openai 2.54.0 · fastapi 0.115.0 · starlette 0.38.6.
+- **Verified:** backend 462 (128 AI), frontend build + oxlint, ruff/mypy/oxlint
+  deltas PASS, all 20 `ai_labs/` demos run clean, secret scan clean.
+- **Learning labs:** 20 self-contained `backend/ai_labs/` demos (never imported
+  by `app/`, each with a README).
+- **Weekend 08+ deferred (course material not yet released):** RAG/embeddings,
+  MCP, multi-agent/sub-agents, autonomous agents, advanced semantic long-term
+  memory, durable threads/approvals.
 
 ## 4. Deferred / Explicitly Out-of-Scope Work
 
@@ -146,40 +118,31 @@ integrated into the SPA. Canonical AI docs: `docs/AI_ASSISTANT_ROADMAP.md`
   Redis-backed rate limiting, staging/GO-NO-GO gate — explicitly postponed.
   Decision report: `docs/P4.2_INFRASTRUCTURE_DECISION_REPORT.md` (D1–D9 owner
   decisions unapproved); plan: `docs/PHASE4_IMPLEMENTATION_PLAN.md`.
-  **Recommended stack (unapproved):** GCP Cloud Run + Cloud SQL + Memorystore
-  + Secret Manager + Workload Identity.
-- **M14 deferred scope (Phase 5):** delivery verification/receiving (M15 —
-  DONE), multi-location inventory (M16), 7-day demand forecast (M16), vendor
-  performance tracking (needs M15 delivery data).
-- **Email/SMS/web-push notification delivery** — M13 is in-app only; external
-  delivery needs a provider + secret management (deferred).
-- **7-day low-stock demand forecast** — static reorder-threshold alerts only;
-  forecast is Phase 5 (needs a worker).
 - **Phase 5 remainder** (locations/forecast M16), **Phase 6** (daily-log photos
   + voice-to-text, offline, quality hold-points, attendance), **Phase 7** (the
   product's own AI/ML: predictive delay / CV-QC / BOQ), **Phase 8**
-  (scale/SSO/compliance) — planned; **M-series development is paused** while
-  the AI learning workstream (AI-1 done, AI-2 next) runs.
-- **AI-1 limitations (deferred by design):** memory/checkpointing (AI-2), web
-  search (AI-3), limits/fallback/PII/retry middleware (AI-4), tool selector
-  (AI-5), HITL + mutating tools (AI-6), RAG/vector DB/MCP/multi-agent (parking
-  lot).
+  (scale/SSO/compliance) — planned.
+- **Weekend 08+ AI concepts** (RAG, MCP, multi-agent, autonomous agents,
+  durable threads/approvals) — **wait for the course material**, do not invent.
+- **Email/SMS/web-push notification delivery** — M13 is in-app only.
 - **httpOnly refresh-cookie transport** — M9-deferred; requires HTTPS env.
-- **Frontend automated/E2E tests** — deferred (Playwright smoke is Phase 4).
+- **Frontend automated/E2E tests** — deferred.
 
 ## 5. Current Production/Demo Architecture
 
 - **Development/demo:** Docker Compose (PostgreSQL 16, Redis 7, backend on
   `:8000` via gunicorn/uvicorn); frontend served by Vite dev server on
-  `:5173`. Redis is provisioned but **unused by any code**. **Docker is
-  currently up** (verified Aug 15, 2026); if down, start
+  `:5173`. Redis is provisioned but **unused by any code**. Start
   `docker compose up -d postgres` before relying on the live DB.
 - **Deployment target (documented, not built):** Render.com for feature/demo
   per the roadmap; Phase 4 production rails (IaC/secrets/observability) are
-  deferred. GCP/Cloud Run is the recommended Phase 4 stack (unapproved).
+  deferred.
 - **Migrations** run at container startup (`alembic upgrade head`) in dev;
-  `alembic/env.py` reads DB credentials from app settings (single source of
-  truth).
+  `alembic/env.py` reads DB credentials from app settings.
+- **Dev-workflow gotcha:** compose bind-mounts only `backend/app`; `alembic/
+  versions` is baked into the image — **rebuild the backend image after every
+  migration change** (`docker compose build backend && docker compose up -d
+  backend`).
 
 ## 6. Authoritative Documentation Hierarchy
 
@@ -189,190 +152,127 @@ integrated into the SPA. Canonical AI docs: `docs/AI_ASSISTANT_ROADMAP.md`
 | Current verified project state (facts, tests, limitations) | `docs/CURRENT_STATE.md` |
 | System architecture and invariants | `docs/ARCHITECTURE.md` |
 | Milestone direction and sequencing | `docs/ROADMAP.md` |
-| Historical development/session record | `docs/SESSION_NOTES.md` |
 | Approved milestone scope **before** implementation | `docs/M*_IMPLEMENTATION_PLAN.md` |
 | Post-implementation verification (what was actually done) | `docs/M*_IMPLEMENTATION_REVIEW.md` |
 | Current-session continuation state (temporary) | `docs/SESSION_HANDOFF.md` |
 | Product vision | `docs/PRODUCT_REQUIREMENTS.md` (SRS-derived) |
-| Prior comprehensive audit | `docs/TECHNICAL_AUDIT.md` |
-| Phase 4 infrastructure decision pass | `docs/P4.2_INFRASTRUCTURE_DECISION_REPORT.md` |
-| AI workstream roadmap (course mapping, AI-0) | `docs/AI_ASSISTANT_ROADMAP.md` |
-| AI-1 approved scope (pre-implementation) | `docs/AI1_IMPLEMENTATION_PLAN.md` |
-| AI-1 technical canonical record | `docs/AI1_IMPLEMENTATION_REVIEW.md` |
-| AI-1 plain-language learning summary | `docs/AI1_IMPLEMENTATION_SUMMARY.md` |
+| AI workstream: final Weekend-07 program review | `docs/AI_WEEKEND7_IMPLEMENTATION_REVIEW.md` |
+| AI workstream: W7.4 checkpoint review | `docs/AI_W7_4_IMPLEMENTATION_REVIEW.md` |
+| AI workstream: plain-language learning summary | `docs/AI_W7_IMPLEMENTATION_SUMMARY.md` |
+| AI workstream: historical AI-1 records | `docs/AI1_IMPLEMENTATION_REVIEW.md` / `AI1_IMPLEMENTATION_SUMMARY.md` |
 
 Order of trust: **code/tests > CURRENT_STATE.md > milestone reviews > plans >
 ROADMAP.md > older docs**. `ARCHITECTURE.md` is older (Aug 9) and predates
-M10–M15 + AI-1 surfaces; treat its structure as valid but verify current
-endpoint surfaces in code. AI docs: `AI1_IMPLEMENTATION_REVIEW.md` is the
-technical record; `AI1_IMPLEMENTATION_SUMMARY.md` is the simple learning
-reference; do not duplicate their detail into this file.
+M10–M15 + AI surfaces; treat its structure as valid but verify current
+endpoint surfaces in code.
 
 ## 7. RBAC / Security Invariants
 
 - **Roles are ICE-owned.** Google authentication (M11) never grants or changes
-  a role; Google identity is authoritative via `users.google_sub` (unique),
-  and verified email is only a link path — never the identity key.
+  a role; Google identity is authoritative via `users.google_sub` (unique).
 - **4 roles:** `admin`, `site_supervisor`, `procurement_manager`, `client`.
   Admin+procurement see all projects; supervisor/client only assigned ones
   (`project_access.assert_can_view_project`). ARCHIVED projects are 404 to
   non-admin/procurement (never leaked).
 - **Client isolation is server-side (M6):** clients get only the
   `ProjectClientRead` / `InvoiceClientRead` shapes; money/health/inventory/
-  finance/milestone surfaces are 403; clients can never mutate anything
-  (mutation matrix pinned by 17 M6 tests).
+  finance/milestone surfaces are 403; clients can never mutate anything.
 - **M9 session architecture is authoritative:** opaque refresh tokens stored
   only as SHA-256 digests, row-locked rotation, family revocation on reuse,
-  server-side logout, deactivated-user cutoff; access JWTs stay stateless.
-  httpOnly-cookie transport deferred.
+  server-side logout, deactivated-user cutoff.
 - **Lifecycle/archive (M10):** status moves only through audited admin
-  transitions; no hard deletes (soft lifecycle only).
+  transitions; no hard deletes.
 - **Transactions + locking:** mutations commit their data change + audit row
-  atomically; project-scoped writes (tasks, inventory movements, job costs,
-  lifecycle, invoicing, scheduling, purchase orders) serialize on a project
-  row lock; a failed request never leaves a half-applied change. Inventory
-  movements additionally lock the item row; PO transitions lock the project
-  then the PO row.
-- **Audit:** `record_audit()` in the same transaction as the mutation; no
-  second audit system. `audit_logs` and `daily_site_logs` are append-only
-  (no update/delete endpoints).
+  atomically; project-scoped writes serialize on a project row lock.
+- **Audit:** `record_audit()` in the same transaction as the mutation;
+  `audit_logs` and `daily_site_logs` are append-only.
 - **Money** = `Numeric(14,2)`; quantities `Numeric(12,2)`; inventory ledger
-  (`stock_movements`) is immutable and the source of truth. PO totals are
-  server-derived; the invariant `total_amount == Σ line_total + tax_amount`
-  holds under concurrent line edits (test-pinned).
+  (`stock_movements`) is immutable and the source of truth.
 - **Migration discipline:** additive Alembic revisions in one linear chain;
-  upgrade/downgrade/replay is chain-tested; destructive downgrades guarded.
-- **AI Copilot invariants (AI-1):** identity is injected via `ToolRuntime.
-  context` using the public `context_schema=ActorContext` + `context=` API
-  (frozen `ActorContext{user_id, role}`) — never a model argument; every AI
-  tool independently enforces the same REST-equivalent RBAC; the role-filtered
-  tool catalog is defense-in-depth only; client AI tools == the M6 client
-  portal set; no `execute_sql`/generic DB tool exists; all AI tools are
-  read-only; provider/model/base_url/API keys are server-controlled and never
-  accepted from the chat request; execution logging is sanitized and never
-  logs secrets, identity args, raw results, or chain-of-thought.
+  upgrade/downgrade/replay chain-tested.
+- **AI Copilot invariants (authoritative, all test-pinned):** identity is
+  injected via `ToolRuntime.context` (`context_schema=ActorContext`) — never a
+  model argument; every AI tool independently enforces the same REST-equivalent
+  RBAC; the role-filtered tool catalog is defense-in-depth only; client AI
+  tools == the M6 client portal set; no `execute_sql`/generic DB tool;
+  provider/model/base_url/API keys are server-controlled; thread ownership is
+  user-namespaced (cross-user resume impossible); HITL approval never bypasses
+  RBAC (client approve → still denied); HITL approvals are **single-use**
+  (double-resume returns `no_pending_approval`, no duplicate mutation/audit —
+  regression-pinned); execution logging is sanitized (no secrets, identity
+  args, raw results, chain-of-thought).
 
 ## 8. Database / Migration State
 
 - **Repo Alembic head = `l5d6e7f8a9b0`** (M15 `deliveries`/`delivery_lines` +
-  `po_status` extension). **Live dev DB verified at the same revision** (Aug 14,
-  2026) — migrated via a backend image rebuild after the stale-image fix; run
-  `alembic current` / `alembic heads` inside the container to re-check.
-- **M14 migration** adds `vendors` (unique name, `is_active`), `purchase_orders`
-  (project FK, vendor FK, status enum, PO number, totals/tax, lifecycle
-  columns), `po_lines` (qty/price/cost_code), plus PO numbering/totals
-  backstops. No existing-table changes.
-- **M15 migration** extends `po_status` additively (`PARTIALLY_RECEIVED`/
-  `RECEIVED`), adds `po_lines.received_quantity`/`inventory_item_id`,
-  `stock_movements.po_line_id`, `job_costs.po_line_id`, and new
-  `deliveries`/`delivery_lines` tables (append-only receipt evidence). No
-  destructive existing-table changes; no backfill.
-- Migration chain (14 revisions): `5d2e53a7df4e` (initial) →
-  `8f3a1c2d9e01` (Phase 2) → `a4b6c8d9e2f3` (M1) → `b5c7d9e1f203` (M2) →
-  `c6d8e0f2a415` (M4) → `d7e9f1a2b3c4` (M10) → `e8f2a3c5b7e4` (M3) →
-  `f3a4b5c6d7e8` (M8) → `g5b6c7d8e9f0` (M5) → `h6c7d8e9f0a1` (M9) →
-  `i7d8e9f0a1b2` (M11) → `j8e9f0a1b2c3` (M13) → `k4c5d6e7f8a9` (M14) →
-  `l5d6e7f8a9b0` (M15). M6/M7/M12 had no migration.
+  `po_status` extension). Live dev DB verified at the same revision. AI work
+  added **no migrations** (W7.1–W7.4 are schema-free).
+- Migration chain (14 revisions) through `l5d6e7f8a9b0` — see
+  `docs/CURRENT_STATE.md` §8 for the full chain.
 
 ## 9. Test / Quality Baseline
 
 - **Backend:** `pytest` (async, real Postgres; disposable `ice_test_db`):
-  **390 passing** (verified Aug 15, 2026) — full M1–M15 suite **plus 56 AI
-  tests** (AI-1 incl. the execution-logging suite). Includes the migration-chain test
-  (`backend/tests/test_migrations.py`) through `l5d6e7f8a9b0` (M15).
+  **462 passing** (verified Aug 18, 2026) — full M1–M15 suite **plus 128 AI
+  tests**. Includes the migration-chain test through `l5d6e7f8a9b0` (M15).
 - **Frontend:** `npm run build` (tsc + vite) passes; `npm run lint` (oxlint)
   passes with 1 pre-existing `auth-context.tsx` Fast-Refresh warning.
 - **Lint/type debt (gated, not fixed):** ruff 2 and mypy 10 pre-existing
   findings in `.ci/baseline_{ruff,mypy}.txt`, oxlint 1 in
   `.ci/baseline_oxlint.txt`. Enforced as a CI delta gate (P4.1) via
-  `scripts/ci_quality.py` — **new findings fail the gate; baseline debt must
-  not increase** and may only be reduced by deleting genuinely-fixed lines.
+  `scripts/ci_quality.py`. The mypy baseline includes 2 jose/passlib stub
+  warnings that resolve if the stub packages are installed (not in CI); the
+  gate stays PASS either way.
 - **CI:** `.github/workflows/ci.yml` runs on PR/push: ruff, mypy, pytest
   (incl. migration chain), `git diff --check`, frontend build + oxlint.
-- **Coverage:** ~75% overall; no frontend tests.
-- **Commands:** backend `cd backend && pytest tests/ -v` (requires Postgres;
-  Docker compose or a local PG with `ice_test_db`); frontend
-  `npm run build` / `npm run lint`. Note: `pytest` is **not** installed in the
-  Docker runtime image — run tests from the host.
+- **Commands:** backend `cd backend && pytest tests/ -v` (requires Postgres +
+  the pinned `requirements-dev.txt` venv — the host conda env is drifted);
+  frontend `npm run build` / `npm run lint`.
 
 ## 10. Current Known Technical Debt / Risks
 
-- Pre-existing lint/type baseline: ruff 2, mypy 10, oxlint 1 (must not
-  increase).
+- Pre-existing lint/type baseline: ruff 2, mypy 10 (now 8 current), oxlint 1.
 - Refresh token in `localStorage` (XSS surface; M9-deferred httpOnly cookie).
 - Rate limiting is in-memory/per-process (Phase 4 item).
-- Synchronous `httpx` in async Google callback handlers (M11 residual).
-- Admin self/last-admin deactivation unguarded (M11 residual).
-- No frontend automated tests; audit listing lacks an index; a few DB
-  uniqueness stubs remain (`inventory_items(project_id,name)`,
-  `daily_site_logs(project_id,log_date)`).
-- M14 residual: the PO idempotency finalizer duplicates a small slice of
-  `IdempotencyGuard.finish()` (would need a matching update if M8 adds record
-  columns); no file-upload surface exists yet (any M15 photo-evidence path
-  must be designed safely — type/size validation, signed GCS URLs).
-- Dev-workflow gotcha (fixed Aug 14): the compose backend bind-mounts only
-  `backend/app`, so `alembic/versions` is baked into the image. A stale image
-  silently no-ops `alembic upgrade head` while the live `app/` runs newer code
-  — the `relation "vendors" does not exist` class of error. **Rebuild the
-  backend image (`docker compose build backend`) after every migration change**,
-  then `docker compose up -d backend`.
+- AI thread memory + pending approvals are process-local (InMemorySaver) — a
+  restart loses memory and pending HITL approvals (documented W7.1/W7.4
+  limitation; durable threads are a Weekend-08+ item).
+- No frontend automated tests; a few DB uniqueness stubs remain.
 - Full list: `docs/CURRENT_STATE.md` §5–§8.
 
 ## 11. Remaining Feature Roadmap
 
 From `docs/ROADMAP.md` (Phase 5 → Phase 8). Phase 4 production rails are
-deferred pending owner decisions.
-
-- **Phase 5 — Procurement & Multi-Location Inventory:** (M14 vendors/POs
-  DONE) — M15 delivery verification/receiving (QR/photo-verified receipt
-  releasing stock + cost entries), M16 warehouse/transit/site location
-  dimension + ledgered transfers, M16 7-day low-stock forecast, vendor
-  performance tracking (needs M15 delivery data).
-- **Phase 6 — Field Experience:** photo upload + gallery per daily log, voice
-  capture, offline-first PWA with sync/conflict resolution, quality
-  hold-points/phase gates, attendance + toolbox talks, mobile-first UI.
-- **Phase 7 — AI/ML:** data pipeline, predictive delay-risk with confidence +
-  human-review trail, CV QC anomaly detection, drawing→BOQ suggestions.
-- **Phase 8 — Scale & Maturity:** regional compliance reporting, portfolio
-  forecasting, SSO/OIDC beyond Google, multi-tenant.
-
-Sequencing guardrail: no phase ships to production without Phase 4 rails; if a
-cut is forced, preserve Phase 3 → Phase 4 → Phase 6 → Phase 7 (procurement is
-the most safe to trim/reorder).
+deferred pending owner decisions. The AI learning workstream is complete
+through Weekend 07 and **waits for Weekend 08+ course material** — the ICE
+feature development (Phase 5+) can resume independently when requested.
 
 ## 12. Current Milestones
 
-**M15 — PO Delivery Verification / Receiving — DONE** (committed at HEAD
-`9bfe711`, **not pushed**). A verified receipt is the only path that releases
-stock into inventory + creates `job_costs` entries; partial receiving; receipts
-append-only; `po_receive` audit + `po_received` notifications. Approved plan:
-`docs/M15_IMPLEMENTATION_PLAN.md`.
+**M15 — PO Delivery Verification / Receiving — DONE** (committed).
 
-**AI-1 — ICE Copilot — DONE** (verified SAFE TO COMMIT, **uncommitted**; see §3b).
-**Next: AI-2 — Conversation Intelligence** (memory/checkpointing, conversation
-context, summarization) — not started. M-series development remains paused
-separately (next product milestone after M15 would be M16).
+**AI learning workstream — Weekend 01–07 COMPLETE** (committed at `ce88b1f`).
+**No AI milestone in flight.** Next step: wait for the user/course to provide
+Weekend 08+ material; do not invent new AI milestones. M-series development
+remains paused separately (next product milestone after M15 would be M16).
 
 ## 13. How a Fresh OpenCode Session Must Reconstruct Context
 
 1. Read `docs/AI_CONTEXT.md` (this file).
 2. Read `docs/CURRENT_STATE.md` and `docs/ROADMAP.md`.
-3. Read `docs/SESSION_HANDOFF.md` (if present) for the latest continuation
-   state — it is a snapshot, not authority over code/tests.
-4. Read the relevant milestone implementation plan (before) / review (after)
-   for the active milestone — for the AI workstream that means
-   `docs/AI1_IMPLEMENTATION_REVIEW.md` (technical) and
-   `docs/AI1_IMPLEMENTATION_SUMMARY.md` (plain-language) + the AI-1 plan.
+3. Read `docs/SESSION_HANDOFF.md` (if present) — a snapshot, not authority
+   over code/tests.
+4. For the AI workstream, read `docs/AI_WEEKEND7_IMPLEMENTATION_REVIEW.md`
+   (final program record) and `docs/AI_W7_IMPLEMENTATION_SUMMARY.md`
+   (plain-language).
 5. Inspect `git status`, `git log --oneline -5`, and branch tracking.
 6. Verify `alembic current` matches the repo head **after starting Docker**
-   (the dev DB is currently down); reconcile the dev DB if it lags. Do not
-   claim live-DB state you have not verified.
+   (Postgres required for tests).
 7. Confirm test/quality baselines (pytest count, frontend build/lint, CI
    gates) match the documented numbers before declaring work complete.
 8. Do not implement anything until the current milestone and its approved plan
    are understood; never silently expand milestone scope.
-9. Do not modify an approved implementation plan after implementation begins.
-10. Do not commit or push unless explicitly instructed.
+9. Do not commit or push unless explicitly instructed.
 
 ## 14. Context Compaction / Handoff Protocol
 
