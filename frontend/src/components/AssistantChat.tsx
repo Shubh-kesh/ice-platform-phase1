@@ -13,6 +13,7 @@ import {
   ThumbsUp,
 } from "lucide-react";
 import { streamChat, streamResume } from "../lib/assistant";
+import AssistantMessage from "./AssistantMessage";
 import type {
   ApprovalRequest,
   AssistantCapabilities,
@@ -281,27 +282,6 @@ export function AssistantChat({ capabilities }: AssistantChatProps) {
     return label === "Web search" ? "Searching the web…" : `Checking ${label}…`;
   }
 
-  function renderText(text: string) {
-    // Render assistant text with safe links for http(s) URLs (no raw HTML;
-    // React auto-escapes everything else). `javascript:` URLs are not matched.
-    const parts = text.split(/(https?:\/\/[^\s]+)/g);
-    return parts.map((part, index) =>
-      /^https?:\/\//.test(part) ? (
-        <a
-          key={index}
-          href={part}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-blueprint-400 underline underline-offset-2 hover:text-blueprint-200"
-        >
-          {part}
-        </a>
-      ) : (
-        part
-      ),
-    );
-  }
-
   const hasToolLabels = capabilities.tools.length > 0;
   const examples = exampleQuestions(capabilities);
   const empty = messages.length === 0;
@@ -404,10 +384,14 @@ export function AssistantChat({ capabilities }: AssistantChatProps) {
               className={
                 message.role === "user"
                   ? "ml-auto max-w-[85%] whitespace-pre-wrap rounded-lg bg-blueprint-400/15 px-3 py-2 text-sm text-paper"
-                  : "max-w-[85%] whitespace-pre-wrap rounded-lg bg-ink px-3 py-2 text-sm text-paper"
+                  : "max-w-full rounded-lg bg-ink px-4 py-3 text-sm text-paper"
               }
             >
-              {message.role === "assistant" ? renderText(message.text) : message.text}
+              {message.role === "assistant" ? (
+                <AssistantMessage text={message.text} />
+              ) : (
+                message.text
+              )}
               {message.role === "assistant" && streaming && index === messages.length - 1 && (
                 <span className="ml-0.5 inline-block h-3.5 w-1 animate-pulse bg-blueprint-400 align-text-bottom" />
               )}
@@ -587,7 +571,9 @@ export function AssistantChat({ capabilities }: AssistantChatProps) {
           )}
         </div>
         <p className="mt-2 text-[10px] text-paper-faint">
-          Answers are read-only and grounded in your permitted project data.
+          {capabilities.read_only || !capabilities.mutations_enabled
+            ? "Answers are grounded in data you are permitted to access."
+            : "Answers use your permitted ICE data. Changes require your approval."}
         </p>
       </div>
     </div>
