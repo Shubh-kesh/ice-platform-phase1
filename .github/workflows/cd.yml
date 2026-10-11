@@ -1,0 +1,124 @@
+# CD — deploy UAT to GCP (ice-spark-build / asia-south1).
+#
+# Trigger: push to main (or manual dispatch). Requires repo variables:
+#   GCP_PROJECT=ice-spark-build, GCP_REGION=asia-south1,
+#   GCP_WIF_PROVIDER=<pool/providers>, GCP_DEPLOYER_SA=<sa email>
+# (bootstrap per docs/GCP_DEPLOY.md §2). Infra lives in infra/terraform/ (UAT only).
+#
+# Flow: WIF auth → build/push images → pre-deploy DB backup → migrate (explicit
+# step, never at container boot) → deploy backend+frontend revisions → smoke.
+# Rollback: previous Cloud Run revision keeps 0%→100% flip (see runbook §8).
+
+name: CD (UAT)
+
+on:
+  push:
+    branches:
+      - main
+      - claude-development # UAT tracks the working branch (option A); prod will be main-only later
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: cd-uat
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  AR_REPO: asia-south1-docker.pkg.dev/${{ vars.GCP_PROJECT }}/ice-uat
+
+jobs:
+  deploy-uat:
+    name: Build, migrate, deploy UAT
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Auth to GCP (WIF, no keys)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+
+      - name: Set up gcloud + docker auth
+        uses: google-github-actions/setup-gcloud@v2
+      - run: gcloud auth configure-docker asia-south1-docker.pkg.dev --quiet
+
+      - name: Build + push backend
+        working-directory: backend
+        run: |
+          TAG="${AR_REPO}/ice-backend:${GITHUB_SHA}"
+          docker build -t "$TAG" .
+          docker push "$TAG"
+          echo "BACKEND_IMAGE=$TAG" >> "$GITHUB_ENV"
+
+      - name: Resolve backend URL (for VITE_API_URL bake)
+        run: |
+          URL="$(gcloud run services describe ice-backend-uat \
+            --project="$GCP_PROJECT" --region="$GCP_REGION" \
+            --format='value(status.url)')"
+          echo "BACKEND_URL=$URL" >> "$GITHUB_ENV"
+
+      - name: Build + push frontend
+        working-directory: frontend
+        run: |
+          TAG="${AR_REPO}/ice-frontend:${GITHUB_SHA}"
+          docker build --build-arg "VITE_API_URL=${BACKEND_URL}/api/v1" -t "$TAG" .
+          docker push "$TAG"
+          echo "FRONTEND_IMAGE=$TAG" >> "$GITHUB_ENV"
+
+      - name: Pre-deploy DB backup
+        run: |
+          gcloud sql backups create --instance=ice-uat-db \
+            --project="$GCP_PROJECT" \
+            --description="pre-${GITHUB_SHA}" || echo "backup-hook-skipped"
+
+      - name: Migrate (explicit deploy step)
+        run: |
+          # Runs against Cloud SQL's public IP from a throwaway Cloud Run job
+          # with the backend image (alembic + psycopg2 onboard). No VPC needed.
+          SQL_IP="$(gcloud sql instances describe ice-uat-db \
+            --project="$GCP_PROJECT" --format='value(ipAddresses[0].ipAddress)')"
+          gcloud run jobs create "ice-migrate-${GITHUB_SHA::8}" \
+            --project="$GCP_PROJECT" --region="$GCP_REGION" \
+            --image="$BACKEND_IMAGE" \
+            --service-account="ice-uat-runtime@${GCP_PROJECT}.iam.gserviceaccount.com" \
+            --set-env-vars="ENVIRONMENT=uat,ICE_RUN_MIGRATIONS_ONLY=true,POSTGRES_SERVER=${SQL_IP},POSTGRES_PORT=5432,POSTGRES_USER=ice_app,POSTGRES_DB=ice_uat" \
+            --set-secrets="SECRET_KEY=uat-SECRET_KEY:latest,POSTGRES_PASSWORD=uat-POSTGRES_PASSWORD:latest" \
+            --command="alembic" --args="upgrade,head" --task-timeout=600 \
+            --max-retries=0 || true
+          gcloud run jobs execute "ice-migrate-${GITHUB_SHA::8}" \
+            --project="$GCP_PROJECT" --region="$GCP_REGION" --wait
+
+      - name: Deploy backend revision
+        run: |
+          gcloud run services update ice-backend-uat \
+            --project="$GCP_PROJECT" --region="$GCP_REGION" \
+            --image="$BACKEND_IMAGE"
+
+      - name: Deploy frontend revision
+        run: |
+          gcloud run services update ice-frontend-uat \
+            --project="$GCP_PROJECT" --region="$GCP_REGION" \
+            --image="$FRONTEND_IMAGE"
+
+      - name: Smoke (health → auth → read)
+        run: |
+          set -e
+          curl -fsS "${BACKEND_URL}/health"
+          curl -fsS "${BACKEND_URL}/ready"
+          FRONT="$(gcloud run services describe ice-frontend-uat \
+            --project="$GCP_PROJECT" --region="$GCP_REGION" \
+            --format='value(status.url)')"
+          # Probe "/" (the SPA itself), not /healthz: edge caches can hold a
+          # stale 404 on the probe path across revisions (seen in UAT boot).
+          curl -fsS "$FRONT/" -o /dev/null
+          echo "UAT frontend: $FRONT"
+          echo "UAT backend:  $BACKEND_URL"

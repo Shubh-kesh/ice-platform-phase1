@@ -7,6 +7,7 @@ file thin — actual logic lives in api/, core/, models/, and schemas/.
 """
 import logging
 import time
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
@@ -79,16 +80,21 @@ async def request_timing_and_logging(request: Request, call_next):
     """Logs every request with latency. Cheap now, invaluable once you have
     15 sites hitting the API and something feels slow."""
     start = time.perf_counter()
+    # P4.4 seed: accept or mint X-Request-ID so logs/traces correlate across
+    # Cloud Run revisions. Echoed back on every response.
+    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:16]
     response = await call_next(request)
     duration_ms = (time.perf_counter() - start) * 1000
     logger.info(
-        "%s %s -> %d (%.1fms)",
+        "%s %s -> %d (%.1fms) rid=%s",
         request.method,
         request.url.path,
         response.status_code,
         duration_ms,
+        request_id,
     )
     response.headers["X-Process-Time-Ms"] = f"{duration_ms:.1f}"
+    response.headers["X-Request-ID"] = request_id
     return response
 
 
@@ -123,6 +129,23 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 async def health_check():
     """Used by GCP load balancer / Cloud Run health checks and CI smoke tests."""
     return {"status": "ok", "environment": settings.ENVIRONMENT}
+
+
+@app.get("/ready", tags=["health"])
+async def readiness_check():
+    """Readiness for Cloud Run / LB probes and CD smoke: verifies the app can
+    actually serve traffic (DB reachable). Redis is provisioned but unused by
+    any code path, so it is reported — not checked — until P4.4 wires it."""
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+    except Exception:
+        logger.exception("Readiness check failed: database unreachable")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "not_ready", "database": "unreachable", "redis": "unused"},
+        )
+    return {"status": "ready", "database": "ok", "redis": "unused"}
 
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
